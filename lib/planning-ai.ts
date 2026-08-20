@@ -1,0 +1,119 @@
+import "server-only"
+
+import { buildBnccPrompt, type PlanningPromptInput } from "@/lib/prompt"
+import {
+  buildMaterialJsonSchema,
+  analyzePlanningRequest,
+  planningTypeIdFromLabel,
+  validatePlanningContentForRequest,
+  type RequestAnalysis,
+} from "@/lib/planning-templates"
+import { isPlanningContent, type PlanningContent } from "@/lib/planning-content"
+import { GeminiIntegrationError, toGeminiIntegrationError } from "@/lib/gemini"
+import {
+  getFallbackTextAIProvider,
+  getTextAIProvider,
+} from "@/lib/ai/providers"
+import type { TextAIProvider } from "@/lib/ai/providers/types"
+
+export interface PlanningGenerationResult {
+  content: PlanningContent
+  analysis: RequestAnalysis
+  provider: "gemini" | "openai"
+  warning?: string
+  corrected: boolean
+}
+
+function invalidStructureError(errors: string[]): GeminiIntegrationError {
+  return new GeminiIntegrationError({
+    code: "PARSE_ERROR",
+    message: "A IA não respeitou o tipo ou a quantidade solicitada. Tente novamente.",
+    httpStatus: 502,
+    technicalMessage: errors.join(" ").slice(0, 1_000),
+  })
+}
+
+async function generateAndCorrect(
+  provider: TextAIProvider,
+  prompt: string,
+  schema: Record<string, unknown>,
+  analysis: RequestAnalysis,
+): Promise<{ content: PlanningContent; corrected: boolean }> {
+  const generate = (currentPrompt: string) =>
+    provider.generateStructured({
+      prompt: currentPrompt,
+      schema,
+      validator: isPlanningContent,
+      formatName: analysis.materialType,
+      maxOutputTokens: (analysis.expectedCount || 0) > 20 ? 24_000 : 16_000,
+    })
+
+  const first = await generate(prompt)
+  const firstValidation = validatePlanningContentForRequest(first, analysis)
+  if (firstValidation.valid) return { content: first, corrected: false }
+
+  const correctionPrompt = `${prompt}
+
+CORREÇÃO OBRIGATÓRIA DA RESPOSTA ANTERIOR:
+${firstValidation.errors.map((error) => `- ${error}`).join("\n")}
+
+RESPOSTA ANTERIOR PARA CORRIGIR:
+${JSON.stringify(first)}
+
+Gere novamente o JSON completo. Preserve o conteúdo válido, mas corrija o tipo, a estrutura, a numeração e a quantidade exata antes de responder.`
+  const corrected = await generate(correctionPrompt)
+  const correctedValidation = validatePlanningContentForRequest(corrected, analysis)
+  if (!correctedValidation.valid) throw invalidStructureError(correctedValidation.errors)
+
+  return { content: corrected, corrected: true }
+}
+
+export async function generatePlanningContent(
+  input: PlanningPromptInput,
+): Promise<PlanningGenerationResult> {
+  const planningTypeId =
+    input.planningTypeId || planningTypeIdFromLabel(input.planningType) || "outro"
+  const detected = analyzePlanningRequest(planningTypeId, input.request)
+  const analysis: RequestAnalysis = {
+    ...detected,
+    theme: input.topic?.trim() || detected.theme,
+  }
+  if (!analysis.quantityValid) {
+    throw new GeminiIntegrationError({
+      code: "BAD_REQUEST",
+      message: "A quantidade solicitada deve estar entre 1 e 50 itens.",
+      httpStatus: 400,
+    })
+  }
+
+  const schema = buildMaterialJsonSchema(analysis)
+  const prompt = `${buildBnccPrompt({ ...input, planningTypeId }, analysis)}
+
+SCHEMA JSON OBRIGATÓRIO PARA A RESPOSTA:
+${JSON.stringify(schema)}`
+  const primary = getTextAIProvider()
+  const fallback = getFallbackTextAIProvider(primary)
+
+  try {
+    const generated = await generateAndCorrect(primary, prompt, schema, analysis)
+    return { ...generated, analysis, provider: primary.id }
+  } catch (primaryError) {
+    const normalizedError = toGeminiIntegrationError(primaryError)
+    console.error(`[planning-ai] Provedor ${primary.id} falhou (${normalizedError.code}).`)
+    if (!fallback) throw normalizedError
+
+    try {
+      const generated = await generateAndCorrect(fallback, prompt, schema, analysis)
+      return {
+        ...generated,
+        analysis,
+        provider: fallback.id,
+        warning: `O provedor ${primary.id} falhou; ${fallback.id} foi utilizado como fallback.`,
+      }
+    } catch (fallbackError) {
+      const errorName = fallbackError instanceof Error ? fallbackError.name : "UnknownError"
+      console.error(`[planning-ai] Fallback ${fallback.id} também falhou (${errorName}).`)
+      throw normalizedError
+    }
+  }
+}

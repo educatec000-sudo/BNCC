@@ -1,0 +1,301 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  password      String?
+  role          Role      @default(TEACHER)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts           Account[]
+  sessions           Session[]
+  lessonPlans        LessonPlan[]
+  materialImages     MaterialImage[]
+  documentRevisions  DocumentRevision[]
+  materialOperations MaterialOperation[]
+  subscription       Subscription?
+  usage              Usage?
+  schoolMember       SchoolMember?
+  adminOfSchool      School?
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Subscription {
+  id                   String             @id @default(cuid())
+  userId               String             @unique
+  plan                 SubscriptionPlan   @default(FREE)
+  status               SubscriptionStatus @default(ACTIVE)
+  kiwifyCustomerId     String?
+  kiwifySubscriptionId String?            @unique
+  kiwifyOrderId        String?
+  kiwifyProductId      String?
+  currentPeriodStart   DateTime?
+  currentPeriodEnd     DateTime?
+  lateSince            DateTime?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([kiwifyOrderId])
+  @@index([kiwifyProductId])
+}
+
+model Usage {
+  id                     String    @id @default(cuid())
+  userId                 String    @unique
+  freeGenerationsUsed    Int       @default(0)
+  monthlyGenerationsUsed Int       @default(0)
+  freeImagesUsed         Int       @default(0)
+  monthlyImagesUsed      Int       @default(0)
+  dailyImagesUsed        Int       @default(0)
+  imageUsageDay          DateTime?
+  usagePeriodStart       DateTime?
+  usagePeriodEnd         DateTime?
+  updatedAt              DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model WebhookEvent {
+  id          String    @id @default(cuid())
+  eventId     String    @unique
+  eventType   String
+  payload     Json
+  processed   Boolean   @default(false)
+  processedAt DateTime?
+  error       String?
+  createdAt   DateTime  @default(now())
+
+  @@index([eventType, createdAt])
+  @@index([processed, createdAt])
+}
+
+model LessonPlan {
+  id                     String         @id @default(cuid())
+  userId                 String
+  title                  String
+  theme                  String
+  topic                  String         @default("Não informado")
+  educationStage         String         @default("Não informado")
+  grade                  String
+  subject                String
+  planningType           String         @default("Plano de aula")
+  request                String         @db.Text
+  requestedQuantity      Int?
+  difficulty             String?
+  outputFormat           String?
+  imageMode              String         @default("NONE")
+  imageStyle             String         @default("EDUCATIONAL")
+  coloringPage           Boolean        @default(false)
+  accessibleImages       Boolean        @default(false)
+  generateAltText        Boolean        @default(true)
+  additionalPreferences  String?        @db.Text
+  inclusionMode          String         @default("REGULAR")
+  inclusionNeeds         Json           @default("[]")
+  accessibilityResources Json           @default("[]")
+  pedagogicalProfile     Json?
+  bnccSkills             Json           @default("[]")
+  status                 PlanningStatus @default(COMPLETED)
+  content                Json
+  adaptedContent         Json?
+  adaptedFor             Json           @default("[]")
+  editorDocument         Json?
+  editorVersion          Int            @default(1)
+  editorUpdatedAt        DateTime?
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+
+  user       User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  images     MaterialImage[]
+  revisions  DocumentRevision[]
+  operations MaterialOperation[]
+
+  @@index([userId, createdAt])
+  @@index([userId, planningType])
+  @@index([userId, inclusionMode])
+}
+
+model MaterialImage {
+  id           String      @id @default(cuid())
+  userId       String
+  lessonPlanId String
+  prompt       String      @db.Text
+  model        String
+  provider     String
+  planCode     String
+  usageUnits   Int         @default(1)
+  style        String
+  status       ImageStatus @default(PENDING)
+  altText      String?     @db.Text
+  placementKey String
+  position     Int         @default(0)
+  widthPercent Int         @default(100)
+  version      Int         @default(1)
+  mimeType     String?
+  imageData    Bytes?
+  imageHash    String?
+  cacheKey     String
+  error        String?     @db.Text
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  user       User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lessonPlan LessonPlan             @relation(fields: [lessonPlanId], references: [id], onDelete: Cascade)
+  versions   MaterialImageVersion[]
+
+  @@index([userId, createdAt])
+  @@index([lessonPlanId, placementKey, position])
+  @@index([cacheKey, status])
+}
+
+model MaterialImageVersion {
+  id              String   @id @default(cuid())
+  materialImageId String
+  version         Int
+  provider        String
+  model           String
+  mimeType        String
+  imageData       Bytes
+  imageHash       String
+  createdAt       DateTime @default(now())
+
+  materialImage MaterialImage @relation(fields: [materialImageId], references: [id], onDelete: Cascade)
+
+  @@unique([materialImageId, version])
+  @@index([materialImageId, createdAt])
+}
+
+model DocumentRevision {
+  id           String   @id @default(cuid())
+  lessonPlanId String
+  userId       String
+  version      Int
+  document     Json
+  changeType   String   @default("MANUAL_EDIT")
+  createdAt    DateTime @default(now())
+
+  lessonPlan LessonPlan @relation(fields: [lessonPlanId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([lessonPlanId, version])
+  @@index([userId, createdAt])
+}
+
+model MaterialOperation {
+  id           String   @id @default(cuid())
+  lessonPlanId String?
+  userId       String
+  type         String
+  usesAi       Boolean  @default(false)
+  units        Int      @default(0)
+  provider     String?
+  model        String?
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  lessonPlan LessonPlan? @relation(fields: [lessonPlanId], references: [id], onDelete: SetNull)
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([lessonPlanId, createdAt])
+  @@index([type, createdAt])
+}
+
+model School {
+  id        String   @id @default(cuid())
+  name      String
+  adminId   String   @unique
+  seats     Int      @default(10)
+  createdAt DateTime @default(now())
+
+  admin   User           @relation(fields: [adminId], references: [id])
+  members SchoolMember[]
+}
+
+model SchoolMember {
+  id       String @id @default(cuid())
+  schoolId String
+  userId   String @unique
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum Role {
+  TEACHER
+  SCHOOL_ADMIN
+  SUPER_ADMIN
+}
+
+enum SubscriptionPlan {
+  FREE
+  PROFESSOR
+  PREMIUM
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  LATE
+  CANCELLED
+  EXPIRED
+  REFUNDED
+  CHARGEBACK
+}
+
+enum PlanningStatus {
+  DRAFT
+  COMPLETED
+  ARCHIVED
+}
+
+enum ImageStatus {
+  PENDING
+  READY
+  FAILED
+  DELETED
+}
