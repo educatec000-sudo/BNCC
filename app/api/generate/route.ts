@@ -299,12 +299,23 @@ export async function POST(req: NextRequest) {
       message: reservation.message,
       ...(generated.warning ? { warning: generated.warning } : {}),
     })
-  } catch {
-    await safelyRelease(reservation)
-    console.error("[api/generate] O planejamento foi gerado, mas não pôde ser salvo.")
-    return NextResponse.json(
-      { error: "O planejamento foi gerado, mas não pôde ser salvo. Tente novamente." },
-      { status: 500 },
-    )
+  } catch (error) {
+  await safelyRelease(reservation)
+
+  console.error("[api/generate] Erro ao salvar planejamento:", error)
+
+  if (error instanceof Error) {
+    console.error("[api/generate] Nome:", error.name)
+    console.error("[api/generate] Mensagem:", error.message)
+    console.error("[api/generate] Stack:", error.stack)
   }
+
+  return NextResponse.json(
+    {
+      error: "O planejamento foi gerado, mas não pôde ser salvo.",
+      details: error instanceof Error ? error.message : String(error),
+    },
+    { status: 500 },
+  )
+}
 }

@@ -1,4 +1,4 @@
-export const FREE_TOTAL_LIMIT = 2
+export const FREE_TOTAL_LIMIT = 20
 
 export type PaidPlanSlug = "professor" | "premium"
 export type PlanCode = "FREE" | "PROFESSOR" | "PREMIUM"
