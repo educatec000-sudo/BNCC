@@ -8,12 +8,16 @@ import {
   View,
 } from "@react-pdf/renderer"
 import {
+  headerFieldMetrics,
+  headerFieldRows,
+  headerFieldWidth,
   plainTextFromHtml,
   type EditorDocument,
   type EditorElement,
   type EditorImageReference,
   type EditorTextStyle,
 } from "@/lib/editor-document"
+import { estimateElementHeight, estimateQuestionHeight, groupSectionElements, isTwoColumns, layoutFlow } from "@/lib/document-layout"
 
 export interface ResolvedEditorAsset {
   id: string
@@ -37,17 +41,14 @@ const styles = StyleSheet.create({
   title: { fontFamily: "Helvetica-Bold", fontSize: 18, marginBottom: 5, color: "#123f3b" },
   subtitle: { fontSize: 9, color: "#5b6875", marginBottom: 12 },
   headerGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
     borderTopWidth: 0.6,
     borderTopColor: "#7e8b96",
     marginBottom: 14,
     paddingTop: 4,
   },
-  headerField: { width: "48.5%", borderBottomWidth: 0.6, borderBottomColor: "#9ca8b2", paddingVertical: 5 },
+  headerRow: { flexDirection: "row", alignItems: "stretch" },
+  headerLine: { borderBottomWidth: 0.6, borderBottomColor: "#9ca8b2", flexDirection: "row", alignItems: "flex-end" },
   headerLabel: { fontFamily: "Helvetica-Bold", fontSize: 7.5, color: "#41505f" },
-  headerValue: { fontSize: 9.5, minHeight: 12, paddingTop: 2 },
   fixedFooter: {
     position: "absolute",
     left: 48,
@@ -82,8 +83,11 @@ const styles = StyleSheet.create({
   tableHeader: { backgroundColor: "#e8f3f1" },
   tableCell: { flex: 1, padding: 5, borderRightWidth: 0.4, borderRightColor: "#c3ccd3", fontSize: 8 },
   question: { marginBottom: 14 },
+  questionColumns: { flexDirection: "column" },
+  questionRow: { flexDirection: "row", alignItems: "flex-start" },
+  questionCell: { flex: 1 },
   questionPrompt: { fontFamily: "Helvetica-Bold", marginBottom: 5 },
-  alternative: { flexDirection: "row", marginLeft: 13, marginBottom: 3 },
+  alternative: { flexDirection: "row", marginLeft: 13, marginBottom: 3, textAlign: "left" },
   alternativeMark: { width: 18 },
   alternativeContent: { flex: 1 },
   answerLine: { height: 17, borderBottomWidth: 0.45, borderBottomColor: "#9ba7b1" },
@@ -206,10 +210,10 @@ function blockStyle(style: EditorTextStyle | undefined, document: EditorDocument
       fontFamily: fontWithMarks(fontFromFamily(style?.fontFamily || document.page.defaultFontFamily), style?.bold, style?.italic),
       fontSize: style?.fontSize || document.page.defaultFontSize,
       lineHeight: style?.lineHeight || document.page.lineHeight,
-      textAlign: style?.alignment || "left",
+      textAlign: style?.alignment || document.page.defaultAlignment || "left",
       marginLeft: style?.indent || 0,
-      marginBottom: style?.spacingAfter ?? 6,
-      ...(style?.color ? { color: style.color } : {}),
+      marginBottom: style?.spacingAfter ?? document.page.defaultSpacingAfter ?? 6,
+      ...(style?.color || document.page.defaultColor ? { color: style?.color || document.page.defaultColor } : {}),
       ...(style?.underline ? { textDecoration: "underline" as const } : {}),
     },
   }).dynamicBlock
@@ -295,9 +299,9 @@ function ElementView({ element, document, assets }: {
         <Text>{element.number}. </Text><RichText html={element.content} baseStyle={{ ...element.style, bold: true }} />
       </View>
       {element.images.map((image) => <ImageView key={image.assetId} reference={image} assets={assets} />)}
-      {element.alternatives.map((alternative, index) => (
+      {element.alternatives.map((alternative) => (
         <View key={alternative.id} style={styles.alternative}>
-          <Text style={styles.alternativeMark}>{String.fromCharCode(65 + index)})</Text>
+          <Text style={styles.alternativeMark}>{alternative.letter})</Text>
           <View style={styles.alternativeContent}><RichText html={alternative.content} baseStyle={element.style} /></View>
         </View>
       ))}
@@ -327,12 +331,254 @@ export function EditorPdfDocument({
       value: field.id === "school" && school ? school : field.id === "teacher" && teacher ? teacher : field.value,
     }))
   const schoolName = fields.find((field) => field.id === "school")?.value
+  const gabaritoQuestions = document.sections.flatMap((section) =>
+    section.elements.filter(
+      (element): element is Extract<EditorElement, { type: "question" }> =>
+        element.type === "question" && Boolean(element.answer || element.justification),
+    ),
+  )
   const footerLeft = [
     document.footer.showSchoolName ? schoolName : "",
     document.footer.showMaterialName ? plainTextFromHtml(document.title) : "",
     document.footer.customText,
   ].filter(Boolean).join(" · ")
   const mm = 2.834645669
+  const pxToPt = 0.75
+  const columnGap = document.page.columnGap ?? 24
+  const columnSeparator = document.page.columnSeparator === "line"
+  const twoColumns = isTwoColumns(document)
+  const resolvedOrientation = orientation || document.page.orientation
+  const pageSize = document.page.size === "LETTER" ? "LETTER" : "A4"
+  const pageHeightPt = resolvedOrientation === "landscape"
+    ? (document.page.size === "LETTER" ? 612 : 595)
+    : (document.page.size === "LETTER" ? 792 : 842)
+  const padBottomPt = Math.max(document.page.marginBottom * mm, document.footer.visible ? 42 : 20)
+  const contentHeightPt = Math.max(60, pageHeightPt - document.page.marginTop * mm - padBottomPt)
+
+  const pageStyle = [
+    styles.page,
+    {
+      fontFamily: fontFromFamily(document.page.defaultFontFamily),
+      fontSize: document.page.defaultFontSize,
+      lineHeight: document.page.lineHeight,
+      paddingTop: document.page.marginTop * mm,
+      paddingRight: document.page.marginRight * mm,
+      paddingBottom: padBottomPt,
+      paddingLeft: document.page.marginLeft * mm,
+    },
+  ]
+
+  const footerView = document.footer.visible ? (
+    <View style={styles.fixedFooter} fixed>
+      <Text>{footerLeft || "+ Educação · BNCC Planner"}</Text>
+      {document.footer.showPageNumber && (
+        <Text render={({ pageNumber, totalPages }) => `Página ${pageNumber} de ${totalPages}`} />
+      )}
+    </View>
+  ) : null
+
+  const headerView = document.header.visible && fields.length > 0 ? (
+    <View style={styles.headerGrid}>
+      {headerFieldRows(fields).map((row, rowIndex) => (
+        <View key={rowIndex} style={styles.headerRow}>
+          {row.map((field) => {
+            const metrics = headerFieldMetrics(field, document.header.layout || "normal")
+            const width = `${headerFieldWidth(field, row.length)}%`
+            return (
+              <View
+                key={field.id}
+                wrap={false}
+                style={[styles.headerLine, { width, textAlign: field.alignment || "left", minHeight: metrics.minHeight, marginBottom: metrics.spacingAfter }]}
+              >
+                <Text style={[styles.headerLabel, { fontSize: Math.max(6.5, metrics.fontSize - 1) }]}>{field.label}: </Text>
+                <Text style={{ fontSize: metrics.fontSize, lineHeight: metrics.lineHeight }}>{field.value || " "}</Text>
+              </View>
+            )
+          })}
+        </View>
+      ))}
+    </View>
+  ) : null
+
+  const renderGabarito = (breakBefore = false) =>
+    gabaritoQuestions.length > 0 ? (
+      <View style={styles.section} break={breakBefore}>
+        <View style={styles.sectionTitle}><Text>Gabarito</Text></View>
+        <View style={styles.table} wrap>
+          <View style={[styles.tableRow, styles.tableHeader]} wrap={false}>
+            {["Questão", "Resposta", "Justificativa"].map((header) => (
+              <View key={header} style={styles.tableCell}><Text style={{ fontFamily: "Helvetica-Bold" }}>{header}</Text></View>
+            ))}
+          </View>
+          {gabaritoQuestions.map((question) => (
+            <View key={question.id} style={styles.tableRow} wrap={false}>
+              <View style={[styles.tableCell, { flex: 0.4 }]}><Text>{String(question.number)}</Text></View>
+              <View style={[styles.tableCell, { flex: 0.9 }]}><Text>{question.answer || ""}</Text></View>
+              <View style={styles.tableCell}><Text>{plainTextFromHtml(question.justification || "")}</Text></View>
+            </View>
+          ))}
+        </View>
+      </View>
+    ) : null
+
+  // ÚNICA quebra obrigatória: antes da PRIMEIRA seção pedagógica. Depois dela
+  // tudo flui naturalmente (Habilidades → Inclusão → Gabarito → Justificativas).
+  const pedagogicalBreakEnabled = document.page.pedagogicalPageBreakBefore !== false
+  const firstPedagogicalIndex = document.sections.findIndex((section) => section.kind === "pedagogical")
+
+  if (!twoColumns) {
+    return (
+      <Document
+        title={plainTextFromHtml(document.title)}
+        subject={document.topic}
+        author={teacher || "+ Educação"}
+        creator="+ Educação · BNCC Planner"
+      >
+        <Page size={pageSize} orientation={resolvedOrientation} wrap style={pageStyle}>
+          {footerView}
+
+          <View>
+            <View style={styles.title}><RichText html={document.title} baseStyle={{ bold: true }} /></View>
+            {document.subtitle && <Text style={styles.subtitle}>{document.subtitle}</Text>}
+            {headerView}
+          </View>
+
+          {document.sections.map((section, sectionIndex) => {
+            const breakBefore =
+              section.pageBreakBefore === true ||
+              (section.kind === "pedagogical" && sectionIndex === firstPedagogicalIndex && pedagogicalBreakEnabled)
+            return (
+              <View key={section.id} style={styles.section} break={breakBefore}>
+                {plainTextFromHtml(section.title).trim() && (
+                  <View style={styles.sectionTitle}><RichText html={section.title} baseStyle={{ bold: true }} /></View>
+                )}
+                {groupSectionElements(section.elements).map((group) =>
+                  group.kind === "full" ? (
+                    <ElementView key={group.element.id} element={group.element} document={document} assets={assetMap} />
+                  ) : (
+                    group.questions.map((question) => (
+                      <ElementView key={question.id} element={question} document={document} assets={assetMap} />
+                    ))
+                  ),
+                )}
+              </View>
+            )
+          })}
+
+          {/* Gabarito: quebra só quando é o primeiro conteúdo pedagógico (sem BNCC/inclusão). */}
+          {renderGabarito(firstPedagogicalIndex === -1 && pedagogicalBreakEnabled)}
+        </Page>
+      </Document>
+    )
+  }
+
+  // ===== Duas colunas — Simulado: fluxo vertical independente por coluna =====
+  // O MESMO algoritmo do editor (layoutFlow) é aplicado aqui, com alturas
+  // estimadas por questão, sem emparelhar questões em linhas fixas.
+  type PdfFlowBlock = { kind: "full" | "question"; id: string; height: number; breakBefore: boolean; node: React.ReactNode }
+  const flow: PdfFlowBlock[] = []
+  flow.push({
+    kind: "full",
+    id: "__title__",
+    height: 24,
+    breakBefore: false,
+    node: <View style={styles.title}><RichText html={document.title} baseStyle={{ bold: true }} /></View>,
+  })
+  if (document.subtitle) {
+    flow.push({ kind: "full", id: "__subtitle__", height: 14, breakBefore: false, node: <Text style={styles.subtitle}>{document.subtitle}</Text> })
+  }
+  if (headerView) {
+    const headerHeight = headerFieldRows(fields).reduce((sum, row) => {
+      const metrics = headerFieldMetrics(row[0], document.header.layout || "normal")
+      return sum + metrics.minHeight + metrics.spacingAfter
+    }, 14)
+    flow.push({ kind: "full", id: "__header__", height: headerHeight, breakBefore: false, node: headerView })
+  }
+
+  let pendingBreak = false
+  let pedagogicalStarted = false
+  document.sections.forEach((section) => {
+    // Seções pedagógicas (BNCC/inclusão/gabarito) ficam SEMPRE em uma coluna.
+    // Quebra OBRIGATÓRIA somente na primeira seção pedagógica; as demais fluem
+    // naturalmente (paginação por altura), sem páginas exclusivas por seção.
+    const isPedagogical = section.kind === "pedagogical"
+    const isFirstPedagogical = isPedagogical && !pedagogicalStarted
+    if (isPedagogical) pedagogicalStarted = true
+    const forceBreak = isFirstPedagogical && pedagogicalBreakEnabled
+    const titleVisible = plainTextFromHtml(section.title).trim().length > 0
+    const sectionBreak = section.pageBreakBefore === true || pendingBreak || forceBreak
+    if (titleVisible) {
+      flow.push({
+        kind: "full",
+        id: `section-title-${section.id}`,
+        height: 24,
+        breakBefore: sectionBreak,
+        node: <View style={styles.sectionTitle}><RichText html={section.title} baseStyle={{ bold: true }} /></View>,
+      })
+      pendingBreak = false
+    } else {
+      pendingBreak = sectionBreak
+    }
+    for (const group of groupSectionElements(section.elements)) {
+      if (group.kind === "full") {
+        if (group.element.type === "pageBreak") {
+          pendingBreak = true
+          continue
+        }
+        flow.push({
+          kind: "full",
+          id: group.element.id,
+          height: estimateElementHeight(group.element, document) * pxToPt,
+          breakBefore: pendingBreak,
+          node: <ElementView element={group.element} document={document} assets={assetMap} />,
+        })
+        pendingBreak = false
+      } else {
+        for (const question of group.questions) {
+          const height = Math.min(contentHeightPt, estimateQuestionHeight(question) * pxToPt * 1.06)
+          if (isPedagogical) {
+            flow.push({
+              kind: "full",
+              id: question.id,
+              height,
+              breakBefore: pendingBreak,
+              node: <ElementView element={question} document={document} assets={assetMap} />,
+            })
+          } else {
+            flow.push({
+              kind: "question",
+              id: question.id,
+              height,
+              breakBefore: pendingBreak,
+              node: <ElementView element={question} document={document} assets={assetMap} />,
+            })
+          }
+          pendingBreak = false
+        }
+      }
+    }
+  })
+
+  // Gabarito derivado entra no MESMO fluxo pedagógico de uma coluna.
+  const gabaritoId = "__gabarito__"
+  if (gabaritoQuestions.length > 0) {
+    const isFirstPedagogical = !pedagogicalStarted
+    const forceBreak = isFirstPedagogical && pedagogicalBreakEnabled
+    const totalHeight = gabaritoQuestions.reduce(
+      (sum, question) => sum + 18 + Math.max(1, Math.ceil(plainTextFromHtml(question.justification || "").length / 70)) * 14,
+      26,
+    )
+    flow.push({
+      kind: "full",
+      id: gabaritoId,
+      height: Math.min(contentHeightPt, totalHeight * pxToPt),
+      breakBefore: pendingBreak || forceBreak,
+      node: renderGabarito(false),
+    })
+  }
+
+  const pages = layoutFlow(flow.map((block) => ({ kind: block.kind, id: block.id, height: block.height, breakBefore: block.breakBefore })), contentHeightPt)
+  const nodeById = new Map(flow.map((block) => [block.id, block.node]))
 
   return (
     <Document
@@ -341,58 +587,25 @@ export function EditorPdfDocument({
       author={teacher || "+ Educação"}
       creator="+ Educação · BNCC Planner"
     >
-      <Page
-        size={document.page.size === "LETTER" ? "LETTER" : "A4"}
-        orientation={orientation || document.page.orientation}
-        wrap
-        style={[
-          styles.page,
-          {
-            fontFamily: fontFromFamily(document.page.defaultFontFamily),
-            fontSize: document.page.defaultFontSize,
-            lineHeight: document.page.lineHeight,
-            paddingTop: document.page.marginTop * mm,
-            paddingRight: document.page.marginRight * mm,
-            paddingBottom: Math.max(document.page.marginBottom * mm, document.footer.visible ? 42 : 20),
-            paddingLeft: document.page.marginLeft * mm,
-          },
-        ]}
-      >
-        {document.footer.visible && (
-          <View style={styles.fixedFooter} fixed>
-            <Text>{footerLeft || "+ Educação · BNCC Planner"}</Text>
-            {document.footer.showPageNumber && (
-              <Text render={({ pageNumber, totalPages }) => `Página ${pageNumber} de ${totalPages}`} />
-            )}
-          </View>
-        )}
-
-        <View>
-          <View style={styles.title}><RichText html={document.title} baseStyle={{ bold: true }} /></View>
-          {document.subtitle && <Text style={styles.subtitle}>{document.subtitle}</Text>}
-          {document.header.visible && fields.length > 0 && (
-            <View style={styles.headerGrid}>
-              {fields.map((field) => (
-                <View key={field.id} style={styles.headerField} wrap={false}>
-                  <Text style={styles.headerLabel}>{field.label}</Text>
-                  <Text style={styles.headerValue}>{field.value || " "}</Text>
-                </View>
-              ))}
+      {pages.map((page, pageIndex) => (
+        <Page key={pageIndex} size={pageSize} orientation={resolvedOrientation} wrap style={pageStyle}>
+          {footerView}
+          {page.full.map((item) => <React.Fragment key={item.id}>{nodeById.get(item.id)}</React.Fragment>)}
+          {(page.columns[0]?.length || page.columns[1]?.length) ? (
+            <View style={{ flexDirection: "row", alignItems: "stretch" }}>
+              <View style={{ flex: 1 }}>
+                {(page.columns[0] ?? []).map((item) => <React.Fragment key={item.id}>{nodeById.get(item.id)}</React.Fragment>)}
+              </View>
+              <View style={{ width: columnGap, justifyContent: "center" }}>
+                {columnSeparator ? <View style={{ width: 0.75, alignSelf: "stretch", backgroundColor: "#cbd5e1" }} /> : null}
+              </View>
+              <View style={{ flex: 1 }}>
+                {(page.columns[1] ?? []).map((item) => <React.Fragment key={item.id}>{nodeById.get(item.id)}</React.Fragment>)}
+              </View>
             </View>
-          )}
-        </View>
-
-        {document.sections.map((section) => (
-          <View key={section.id} style={styles.section} break={section.pageBreakBefore}>
-            {plainTextFromHtml(section.title).trim() && (
-              <View style={styles.sectionTitle}><RichText html={section.title} baseStyle={{ bold: true }} /></View>
-            )}
-            {section.elements.map((element) => (
-              <ElementView key={element.id} element={element} document={document} assets={assetMap} />
-            ))}
-          </View>
-        ))}
-      </Page>
+          ) : null}
+        </Page>
+      ))}
     </Document>
   )
 }

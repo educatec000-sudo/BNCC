@@ -50,7 +50,7 @@ export default async function CleanPrintPage({
   const orientation = editor.document.page.orientation === "landscape" ? "landscape" : "portrait"
 
   return (
-    <div className="min-h-screen bg-slate-200 print:bg-white">
+    <div className="min-h-screen bg-muted print:bg-white">
       <style dangerouslySetInnerHTML={{ __html: `@media print { @page { size: ${pageSize} ${orientation}; margin: 0; } }` }} />
       <PrintDocumentActions planId={plan.id} />
       <div className="overflow-auto p-4 print:p-0">

@@ -26,6 +26,7 @@
 }
 
 :root {
+  color-scheme: light;
   --background: 210 28% 98%;
   --foreground: 215 34% 15%;
   --card: 0 0% 100%;
@@ -49,6 +50,7 @@
 }
 
 .dark {
+  color-scheme: dark;
   --background: 216 36% 10%;
   --foreground: 210 25% 95%;
   --card: 215 31% 13%;
@@ -189,6 +191,11 @@ select:focus-visible {
   .document-asset,
   table,
   tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .document-question-cell {
     break-inside: avoid;
     page-break-inside: avoid;
   }

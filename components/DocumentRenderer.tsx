@@ -1,11 +1,16 @@
 /* eslint-disable @next/next/no-img-element */
-import type {
-  EditorAssetView,
-  EditorDocument,
-  EditorElement,
-  EditorImageReference,
-  EditorTextStyle,
+import {
+  headerFieldMetrics,
+  headerFieldRows,
+  headerFieldWidth,
+  plainTextFromHtml,
+  type EditorAssetView,
+  type EditorDocument,
+  type EditorElement,
+  type EditorImageReference,
+  type EditorTextStyle,
 } from "@/lib/editor-document"
+import { groupSectionElements, isTwoColumns } from "@/lib/document-layout"
 import { cn } from "@/lib/utils"
 
 function rich(html: string) {
@@ -19,11 +24,11 @@ function textStyle(style: EditorTextStyle | undefined, document: EditorDocument)
     fontWeight: style?.bold ? 700 : undefined,
     fontStyle: style?.italic ? "italic" : undefined,
     textDecoration: style?.underline ? "underline" : undefined,
-    color: style?.color,
-    textAlign: style?.alignment,
+    color: style?.color || document.page.defaultColor,
+    textAlign: style?.alignment || document.page.defaultAlignment || "left",
     lineHeight: style?.lineHeight || document.page.lineHeight,
     marginLeft: style?.indent ? `${style.indent}px` : undefined,
-    marginBottom: `${style?.spacingAfter ?? 6}px`,
+    marginBottom: `${style?.spacingAfter ?? document.page.defaultSpacingAfter ?? 6}px`,
   }
 }
 
@@ -115,10 +120,10 @@ function Element({
       </div>
       {element.images.map((image) => <ImageContent key={image.assetId} reference={image} assets={assets} />)}
       {element.alternatives.length > 0 && (
-        <ol className="mt-2 space-y-1 pl-6">
-          {element.alternatives.map((alternative, index) => (
+        <ol className="mt-2 space-y-1 pl-6" style={{ textAlign: "left" }}>
+          {element.alternatives.map((alternative) => (
             <li key={alternative.id} className="flex gap-2">
-              <span>{String.fromCharCode(65 + index)})</span>
+              <span>{alternative.letter})</span>
               <span dangerouslySetInnerHTML={rich(alternative.content)} />
             </li>
           ))}
@@ -141,7 +146,6 @@ export function DocumentRenderer({
   className?: string
 }) {
   const assetMap = new Map(assets.map((asset) => [asset.id, asset]))
-  const visibleHeaderFields = document.header.fields.filter((field) => field.visible)
   const school = document.header.fields.find((field) => field.id === "school")?.value
   const footerParts = [
     document.footer.showSchoolName ? school : "",
@@ -149,6 +153,40 @@ export function DocumentRenderer({
     document.footer.customText,
   ].filter(Boolean)
   const landscape = document.page.orientation === "landscape"
+  const headerLayout = document.header.layout || "normal"
+
+  // Gabarito derivado das próprias questões (fonte única de verdade).
+  const gabaritoQuestions = document.sections.flatMap((section) =>
+    section.elements.filter(
+      (element): element is Extract<EditorElement, { type: "question" }> =>
+        element.type === "question" && Boolean(element.answer || element.justification),
+    ),
+  )
+  const gabaritoSection = gabaritoQuestions.length > 0
+    ? {
+        id: "__gabarito__",
+        title: "Gabarito",
+        pageBreakBefore: false,
+        kind: "pedagogical" as const,
+        elements: [
+          {
+            id: "__gabarito-table__",
+            type: "table" as const,
+            headers: ["Questão", "Resposta", "Justificativa"],
+            rows: gabaritoQuestions.map((question) => [
+              String(question.number),
+              question.answer || "",
+              plainTextFromHtml(question.justification || ""),
+            ]),
+          },
+        ],
+      }
+    : null
+  const renderSections = gabaritoSection ? [...document.sections, gabaritoSection] : document.sections
+  // ÚNICA quebra obrigatória: antes da PRIMEIRA seção pedagógica. Depois dela o
+  // conteúdo flui naturalmente (Habilidades → Inclusão → Gabarito → Justificativas).
+  const pedagogicalBreakEnabled = document.page.pedagogicalPageBreakBefore !== false
+  const firstPedagogicalIndex = renderSections.findIndex((section) => section.kind === "pedagogical")
 
   return (
     <article
@@ -156,6 +194,7 @@ export function DocumentRenderer({
       data-page-size={document.page.size}
       data-orientation={document.page.orientation}
       style={{
+        boxSizing: "border-box",
         width: landscape ? "297mm" : document.page.size === "LETTER" ? "216mm" : "210mm",
         minHeight: landscape ? "210mm" : document.page.size === "LETTER" ? "279mm" : "297mm",
         paddingTop: `${document.page.marginTop}mm`,
@@ -170,12 +209,27 @@ export function DocumentRenderer({
       <header className="document-header mb-5 block border-b border-slate-400 pb-4">
         <h1 className="text-2xl font-bold text-teal-900" dangerouslySetInnerHTML={rich(document.title)} />
         {document.subtitle && <p className="mt-1 text-xs text-slate-500">{document.subtitle}</p>}
-        {document.header.visible && visibleHeaderFields.length > 0 && (
-          <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3">
-            {visibleHeaderFields.map((field) => (
-              <div key={field.id} className="min-h-9 border-b border-slate-400">
-                <span className="text-[10px] font-bold tracking-wide text-slate-600">{field.label}</span>
-                <span className="ml-2">{field.value}</span>
+        {document.header.visible && headerFieldRows(document.header.fields).length > 0 && (
+          <div className="mt-4">
+            {headerFieldRows(document.header.fields).map((row, rowIndex) => (
+              <div key={rowIndex} className="flex items-stretch gap-x-5">
+                {row.map((field) => {
+                  const metrics = headerFieldMetrics(field, headerLayout)
+                  const width = headerFieldWidth(field, row.length)
+                  return (
+                    <div key={field.id} className="min-w-0" style={{ width: `${width}%`, textAlign: field.alignment || "left" }}>
+                      <div
+                        className="border-b border-slate-400"
+                        style={{ minHeight: `${metrics.minHeight}pt`, marginBottom: `${metrics.spacingAfter}pt`, lineHeight: metrics.lineHeight }}
+                      >
+                        <span className="font-bold uppercase tracking-wide text-slate-500" style={{ fontSize: `${Math.max(6.5, metrics.fontSize - 1)}pt` }}>
+                          {field.label}:
+                        </span>{" "}
+                        <span style={{ fontSize: `${metrics.fontSize}pt` }}>{field.value}</span>
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             ))}
           </div>
@@ -183,14 +237,43 @@ export function DocumentRenderer({
       </header>
 
       <main className="document-content block p-0">
-        {document.sections.map((section) => (
-          <section key={section.id} className={cn("mb-5", section.pageBreakBefore && "break-before-page")}>
-            {section.title.replace(/<[^>]+>/g, "").trim() && (
-              <h2 className="mb-3 border-b border-teal-200 pb-1 text-lg font-bold text-teal-800" dangerouslySetInnerHTML={rich(section.title)} />
-            )}
-            {section.elements.map((element) => <Element key={element.id} element={element} document={document} assets={assetMap} />)}
-          </section>
-        ))}
+        {renderSections.map((section, sectionIndex) => {
+          // Seções pedagógicas (BNCC/inclusão/gabarito) nunca usam duas colunas.
+          const pedagogical = section.kind === "pedagogical"
+          const breakBefore = section.pageBreakBefore === true ||
+            (pedagogical && sectionIndex === firstPedagogicalIndex && pedagogicalBreakEnabled)
+          return (
+            <section key={section.id} className={cn("mb-5", breakBefore && "break-before-page")}>
+              {section.title.replace(/<[^>]+>/g, "").trim() && (
+                <h2 className="mb-3 border-b border-teal-200 pb-1 text-lg font-bold text-teal-800" dangerouslySetInnerHTML={rich(section.title)} />
+              )}
+              {groupSectionElements(section.elements).map((group, groupIndex) =>
+                group.kind === "full" ? (
+                  <Element key={group.element.id} element={group.element} document={document} assets={assetMap} />
+                ) : isTwoColumns(document) && !pedagogical ? (
+                  <div
+                    key={`questions-${groupIndex}`}
+                    className="document-question-columns"
+                    style={{
+                      columnCount: 2,
+                      columnGap: `${document.page.columnGap ?? 24}px`,
+                      columnFill: "balance",
+                      ...(document.page.columnSeparator === "line" ? { columnRule: "1px solid #cbd5e1" } : {}),
+                    }}
+                  >
+                    {group.questions.map((question) => (
+                      <div key={question.id} className="document-question-cell" style={{ breakInside: "avoid", pageBreakInside: "avoid" }}>
+                        <Element element={question} document={document} assets={assetMap} />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  group.questions.map((question) => <Element key={question.id} element={question} document={document} assets={assetMap} />)
+                ),
+              )}
+            </section>
+          )
+        })}
       </main>
 
       {document.footer.visible && (

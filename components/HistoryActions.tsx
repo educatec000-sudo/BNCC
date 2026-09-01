@@ -3,12 +3,30 @@
 import { useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { Accessibility, CopyPlus, Edit3, Eye, Loader2, RefreshCw, Trash2 } from "lucide-react"
+import {
+  Accessibility,
+  CopyPlus,
+  Edit3,
+  Eye,
+  Loader2,
+  MoreHorizontal,
+  RefreshCw,
+  Trash2,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 
 export function HistoryActions({ planId }: { planId: string }) {
   const router = useRouter()
   const [loading, setLoading] = useState<"duplicate" | "regenerate" | "delete" | null>(null)
+
+  const busy = loading !== null
 
   const duplicate = async () => {
     setLoading("duplicate")
@@ -38,51 +56,61 @@ export function HistoryActions({ planId }: { planId: string }) {
   }
 
   return (
-    <div className="flex flex-wrap items-center justify-end gap-1.5">
-      <Button size="sm" variant="ghost" asChild>
-        <Link href={`/planos/${planId}`} title="Visualizar">
-          <Eye className="h-4 w-4" /> <span className="sr-only">Visualizar</span>
+    <div className="flex items-center justify-end gap-1.5">
+      <Button size="sm" variant="outline" asChild>
+        <Link href={`/planos/${planId}`}>
+          <Eye className="mr-1.5 h-4 w-4" /> Abrir
         </Link>
       </Button>
-      <Button size="sm" variant="ghost" asChild>
-        <Link href={`/dashboard?edit=${planId}`} title="Editar">
-          <Edit3 className="h-4 w-4" /> <span className="sr-only">Editar</span>
-        </Link>
-      </Button>
-      <Button size="sm" variant="ghost" onClick={duplicate} disabled={loading !== null} title="Duplicar">
-        {loading === "duplicate" ? <Loader2 className="h-4 w-4 animate-spin" /> : <CopyPlus className="h-4 w-4" />}
-        <span className="sr-only">Duplicar</span>
-      </Button>
-      <Button size="sm" variant="ghost" asChild>
-        <Link href={`/planos/${planId}#adaptar`} title="Adaptar para inclusão">
-          <Accessibility className="h-4 w-4" /> <span className="sr-only">Adaptar</span>
-        </Link>
-      </Button>
-      <Button
-        size="sm"
-        variant="ghost"
-        onClick={regenerate}
-        disabled={loading !== null}
-        title="Regenerar"
-      >
-        {loading === "regenerate" ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <RefreshCw className="h-4 w-4" />
-        )}
-        <span className="sr-only">Regenerar</span>
-      </Button>
-      <Button
-        size="sm"
-        variant="ghost"
-        onClick={remove}
-        disabled={loading !== null}
-        title="Excluir"
-        className="text-destructive hover:text-destructive"
-      >
-        {loading === "delete" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-        <span className="sr-only">Excluir</span>
-      </Button>
+
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button size="sm" variant="ghost" aria-label="Mais ações">
+            <MoreHorizontal className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-52">
+          <DropdownMenuItem asChild>
+            <Link href={`/dashboard?edit=${planId}`}>
+              <Edit3 className="h-4 w-4" /> Editar
+            </Link>
+          </DropdownMenuItem>
+          <DropdownMenuItem disabled={busy} onSelect={duplicate}>
+            {loading === "duplicate" ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <CopyPlus className="h-4 w-4" />
+            )}
+            Duplicar
+          </DropdownMenuItem>
+          <DropdownMenuItem asChild>
+            <Link href={`/planos/${planId}#adaptar`}>
+              <Accessibility className="h-4 w-4" /> Adaptar para inclusão
+            </Link>
+          </DropdownMenuItem>
+          <DropdownMenuItem disabled={busy} onSelect={regenerate}>
+            {loading === "regenerate" ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            Regenerar
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            disabled={busy}
+            onSelect={remove}
+            className="text-destructive focus:bg-destructive/10 focus:text-destructive"
+          >
+            {loading === "delete" ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Trash2 className="h-4 w-4" />
+            )}
+            Excluir
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   )
 }

@@ -22,6 +22,8 @@
     "test:pdf": "tsx --test tests/pdf-generation.test.tsx",
     "test:images": "tsx --test tests/image-generation.test.ts",
     "test:editor": "tsx --test tests/editor-document.test.tsx",
+    "test:header": "tsx --test tests/header.test.tsx",
+    "test:layout": "tsx --test tests/layout.test.tsx",
     "test:inclusion": "tsx --test tests/inclusion.test.ts"
   },
   "dependencies": {

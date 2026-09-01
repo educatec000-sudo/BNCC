@@ -105,7 +105,7 @@ export function PricingCards({ currentPlan, isAuthenticated, config }: PricingCa
   return (
     <div className="space-y-4">
       {error && (
-        <div className="max-w-2xl mx-auto p-3 text-sm text-red-800 bg-red-50 border border-red-200 rounded-lg">
+        <div className="max-w-2xl mx-auto p-3 text-sm text-red-800 bg-red-50 border border-red-200 rounded-lg dark:text-red-200 dark:bg-red-950/40 dark:border-red-900">
           {error}
         </div>
       )}

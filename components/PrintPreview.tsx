@@ -121,7 +121,7 @@ export function PrintPreview({
           <Eye className="h-5 w-5 text-primary" />
           <h2 id="preview-title" className="font-semibold">Visualização A4</h2>
         </div>
-        <div className="overflow-hidden border bg-slate-200 p-2 sm:p-4">
+        <div className="overflow-hidden border bg-muted p-2 sm:p-4">
           <iframe
             key={pdfUrl}
             src={pdfUrl}

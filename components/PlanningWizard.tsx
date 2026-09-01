@@ -758,7 +758,8 @@ export function PlanningWizard({ initialAccess, initialData }: PlanningWizardPro
                       <button
                         type="button"
                         onClick={() => setStep(Number(editStep))}
-                        className="text-xs text-primary hover:underline"
+                        aria-label={`Editar ${String(label)}`}
+                        className="text-xs text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                       >
                         Editar
                       </button>
@@ -771,7 +772,7 @@ export function PlanningWizard({ initialAccess, initialData }: PlanningWizardPro
         )}
 
         {error && (
-          <div className="mt-6 rounded-lg border border-destructive/20 bg-destructive/10 p-4 text-sm text-destructive">
+          <div role="alert" className="mt-6 rounded-lg border border-destructive/20 bg-destructive/10 p-4 text-sm text-destructive">
             {error}
           </div>
         )}

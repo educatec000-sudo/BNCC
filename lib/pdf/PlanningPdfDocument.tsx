@@ -12,6 +12,7 @@ import type {
   DocumentSection,
   PlanningDocumentModel,
 } from "@/lib/document-model"
+import { alternativeLetter, normalizeAlternativeText } from "@/lib/alternatives"
 
 const styles = StyleSheet.create({
   page: {
@@ -292,8 +293,8 @@ function Block({ block }: { block: DocumentBlock }) {
           ))}
           {question.alternativas.length > 0 ? (
             question.alternativas.map((alternative, index) => (
-              <Text key={alternative} style={styles.alternative}>
-                {String.fromCharCode(97 + index)}) {alternative}
+              <Text key={`${index}-${alternative}`} style={styles.alternative}>
+                {alternativeLetter(index)}) {normalizeAlternativeText(alternative)}
               </Text>
             ))
           ) : (

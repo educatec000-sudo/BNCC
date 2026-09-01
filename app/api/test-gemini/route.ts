@@ -27,6 +27,11 @@ export async function GET() {
     }
   }
 
+  // Nenhum segredo é exposto: apenas presença da chave, nunca o valor.
+  const apiKeyConfigured = Boolean(process.env.GEMINI_API_KEY?.trim())
+  const configuredModel = process.env.GEMINI_MODEL?.trim() || null
+  const startedAt = Date.now()
+
   try {
     const result = await generateGeminiTextResult(
       "Responda apenas: Gemini funcionando.",
@@ -39,7 +44,11 @@ export async function GET() {
 
     return NextResponse.json({
       success: true,
-      model: result.model,
+      apiKeyConfigured,
+      configuredModel,
+      effectiveModel: result.model,
+      usedFallback: result.usedFallback,
+      elapsedMs: Date.now() - startedAt,
       message: result.text,
       ...(result.warning ? { warning: result.warning } : {}),
       compatibleModels: result.compatibleModels,
@@ -51,8 +60,15 @@ export async function GET() {
     return NextResponse.json(
       {
         success: false,
+        apiKeyConfigured,
+        configuredModel,
+        elapsedMs: Date.now() - startedAt,
         code: geminiError.code,
         error: geminiError.message,
+        ...(geminiError.upstreamStatus !== undefined
+          ? { upstreamStatus: geminiError.upstreamStatus }
+          : {}),
+        ...(geminiError.model ? { model: geminiError.model } : {}),
         ...(geminiError.compatibleModels?.length
           ? { compatibleModels: geminiError.compatibleModels }
           : {}),

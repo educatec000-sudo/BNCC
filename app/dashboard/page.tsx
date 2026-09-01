@@ -124,19 +124,19 @@ export default async function DashboardPage({
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
       {query.payment === "processing" && (
-        <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg text-blue-800 font-medium">
+        <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg text-blue-800 font-medium dark:bg-blue-950/40 dark:border-blue-900 dark:text-blue-200">
           Pagamento recebido pela Kiwify. O acesso será liberado assim que o webhook confirmar a compra.
         </div>
       )}
 
       {query.edit && !editingPlan && (
-        <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 font-medium">
+        <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 font-medium dark:bg-amber-950/40 dark:border-amber-900 dark:text-amber-200">
           O planejamento solicitado para edição não foi encontrado ou não pertence à sua conta.
         </div>
       )}
 
       {access.message && (
-        <div className={`p-4 border rounded-lg ${access.canGenerate ? "bg-amber-50 border-amber-200 text-amber-900" : "bg-red-50 border-red-200 text-red-900"}`}>
+        <div className={`p-4 border rounded-lg ${access.canGenerate ? "bg-amber-50 border-amber-200 text-amber-900 dark:bg-amber-950/40 dark:border-amber-900 dark:text-amber-200" : "bg-red-50 border-red-200 text-red-900 dark:bg-red-950/40 dark:border-red-900 dark:text-red-200"}`}>
           <p className="font-medium">{access.message}</p>
           {access.upgradeRequired && (
             <Link href="/assinatura" className="inline-block mt-2 font-semibold underline">

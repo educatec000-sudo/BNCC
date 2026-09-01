@@ -12,10 +12,18 @@ import {
   type LessonPlanContent,
 } from "@/lib/bncc-plan"
 
-const DEFAULT_TIMEOUT_MS = 120_000
-const MODEL_LIST_TIMEOUT_MS = 30_000
+// Timeout padrão por requisição de texto. 45s é razoável: a Gemini responde
+// normalmente em poucos segundos; esperar mais que isso indica indisponibilidade
+// e não deve travar a requisição HTTP do usuário por minutos.
+const DEFAULT_TIMEOUT_MS = 45_000
+const MIN_TIMEOUT_MS = 10_000
+const MAX_TIMEOUT_MS = 120_000
+const MODEL_LIST_TIMEOUT_MS = 15_000
+const MODEL_LIST_CACHE_TTL_MS = 5 * 60_000
 const MAX_GENERATION_MODELS = 4
-const GENERATION_RETRY_DELAYS_MS = [0, 750, 2_000]
+// Uma única nova tentativa, apenas para falhas transitórias do servidor (HTTP 5xx).
+// Timeout/AbortError NÃO são reexecutados, para não multiplicar o tempo total.
+const GENERATION_RETRY_DELAYS_MS = [0, 1_000]
 
 const PREFERRED_MODEL_IDS = [
   "gemini-flash-latest",
@@ -126,6 +134,7 @@ interface ErrorContext {
 }
 
 let availableModelsPromise: Promise<GeminiModelInfo[]> | undefined
+let availableModelsFetchedAt = 0
 
 function getApiKey(): string {
   const apiKey = process.env.GEMINI_API_KEY?.trim()
@@ -206,6 +215,12 @@ function createTimeout(timeoutMs: number) {
   }
 }
 
+function resolveRequestTimeout(timeoutMs?: number): number {
+  const configured = timeoutMs ?? Number(process.env.GEMINI_TIMEOUT_MS?.trim())
+  const value = Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_TIMEOUT_MS
+  return Math.min(Math.max(value, MIN_TIMEOUT_MS), MAX_TIMEOUT_MS)
+}
+
 function wait(delayMs: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, delayMs))
 }
@@ -242,7 +257,11 @@ async function requestAvailableModels(ai: GoogleGenAI): Promise<GeminiModelInfo[
 }
 
 async function getAvailableModels(ai: GoogleGenAI): Promise<GeminiModelInfo[]> {
-  availableModelsPromise ??= requestAvailableModels(ai)
+  const now = Date.now()
+  if (!availableModelsPromise || now - availableModelsFetchedAt >= MODEL_LIST_CACHE_TTL_MS) {
+    availableModelsFetchedAt = now
+    availableModelsPromise = requestAvailableModels(ai)
+  }
 
   try {
     return await availableModelsPromise
@@ -300,22 +319,69 @@ async function resolveModel(ai: GoogleGenAI): Promise<GeminiModelResolution> {
 }
 
 async function resolveModelCandidates(ai: GoogleGenAI): Promise<GeminiModelResolution[]> {
-  const primary = await resolveModel(ai)
-  const models = await getAvailableModels(ai)
-  const ordered = [
-    models.find((model) => model.id === primary.id),
-    ...models.filter((model) => model.id !== primary.id),
-  ].filter((model): model is GeminiModelInfo => Boolean(model))
+  const configuredModel = normalizeConfiguredModel()
+
+  // Sempre verificamos os modelos realmente disponíveis para a chave: aliases
+  // flutuantes como `gemini-flash-latest` podem apontar para um modelo
+  // descontinuado ou indisponível, e só models.list revela isso com segurança.
+  let models: GeminiModelInfo[]
+  try {
+    models = await getAvailableModels(ai)
+  } catch (listError) {
+    // A listagem falhou (rede/permissão). Se há modelo configurado, tentamos
+    // diretamente com ele e deixamos o erro real da geração ser classificado;
+    // caso contrário, não há como escolher um modelo com segurança.
+    if (configuredModel) {
+      return [
+        {
+          id: configuredModel,
+          displayName: configuredModel,
+          thinking: false,
+          configuredModel,
+          usedFallback: false,
+          compatibleModels: [],
+          warning:
+            "Não foi possível listar os modelos disponíveis; tentando o modelo configurado diretamente.",
+        },
+      ]
+    }
+    throw toGeminiIntegrationError(listError)
+  }
+
+  if (models.length === 0) {
+    throw new GeminiIntegrationError({
+      code: "NO_COMPATIBLE_MODEL",
+      message:
+        "A chave não possui nenhum modelo Gemini de texto compatível com generateContent.",
+      httpStatus: 502,
+      technicalMessage: "models.list não retornou modelos Gemini de texto com generateContent.",
+      compatibleModels: [],
+    })
+  }
+
+  const compatibleModels = models.map((model) => model.id)
+  const configuredMatch = configuredModel
+    ? models.find((model) => model.id === configuredModel)
+    : undefined
+
+  // Prioridade: modelo configurado (quando disponível para a chave) seguido dos
+  // demais modelos compatíveis, para fallback rápido se o primeiro falhar.
+  const ordered = configuredMatch
+    ? [configuredMatch, ...models.filter((model) => model.id !== configuredMatch.id)]
+    : models
+  const configuredUnavailable = Boolean(configuredModel && !configuredMatch)
 
   return ordered.slice(0, MAX_GENERATION_MODELS).map((model, index) => ({
     ...model,
-    configuredModel: primary.configuredModel,
-    usedFallback: primary.usedFallback || index > 0,
-    compatibleModels: primary.compatibleModels,
+    configuredModel,
+    usedFallback: index > 0 || configuredUnavailable,
+    compatibleModels,
     warning:
-      index === 0
-        ? primary.warning
-        : `O modelo ${primary.id} ficou indisponível; ${model.id} foi usado como fallback.`,
+      configuredUnavailable && index === 0
+        ? `O modelo configurado ${configuredModel} não está disponível para esta chave. ${model.id} foi selecionado automaticamente.`
+        : index > 0
+          ? `O modelo ${ordered[0].id} ficou indisponível; ${model.id} foi usado como fallback.`
+          : undefined,
   }))
 }
 
@@ -359,15 +425,19 @@ function getUpstreamStatus(error: unknown): number | undefined {
   return undefined
 }
 
-function isTransientGenerationError(error: unknown): boolean {
-  const status = getUpstreamStatus(error)
-  if (status !== undefined && [500, 502, 503, 504].includes(status)) return true
-  if (error instanceof TypeError) return true
+function isAbortNamed(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false
+  const name = (error as { name?: unknown }).name
+  return name === "AbortError" || name === "TimeoutError"
+}
 
-  return (
-    error instanceof DOMException &&
-    (error.name === "AbortError" || error.name === "TimeoutError")
-  )
+function isTransientGenerationError(error: unknown): boolean {
+  // Apenas falhas transitórias genéricas do servidor merecem uma nova tentativa
+  // rápida no MESMO modelo. HTTP 503 (modelo/serviço indisponível) segue direto
+  // para a troca de modelo em canTryAlternativeModel. Timeouts e erros de rede
+  // falham imediatamente para não multiplicar o tempo total da requisição.
+  const status = getUpstreamStatus(error)
+  return status !== undefined && [500, 502].includes(status)
 }
 
 function canTryAlternativeModel(error: unknown): boolean {
@@ -392,10 +462,7 @@ export function toGeminiIntegrationError(
     compatibleModels: context.compatibleModels,
   }
 
-  if (
-    error instanceof DOMException &&
-    (error.name === "AbortError" || error.name === "TimeoutError")
-  ) {
+  if (isAbortNamed(error)) {
     return new GeminiIntegrationError({
       code: "TIMEOUT",
       message: "A Gemini demorou para responder. Tente novamente.",
@@ -530,9 +597,13 @@ export function toGeminiIntegrationError(
   }
 
   if (upstreamStatus === 503) {
+    const modelNote = context.model ? ` para o modelo ${context.model}` : ""
+    const fallbackNote = context.compatibleModels?.length
+      ? " Modelos compatíveis encontrados: " + context.compatibleModels.join(", ") + "."
+      : ""
     return new GeminiIntegrationError({
       code: "GEMINI_SERVICE_UNAVAILABLE",
-      message: "A API Gemini retornou HTTP 503 após retries e fallbacks limitados.",
+      message: `O serviço da Gemini está indisponível${modelNote}. Tente novamente em instantes.${fallbackNote}`,
       httpStatus: 503,
       ...common,
     })
@@ -594,7 +665,7 @@ async function requestText(
   options: GenerateTextOptions,
   includeSchema: boolean,
 ): Promise<string> {
-  const timeout = createTimeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+  const timeout = createTimeout(resolveRequestTimeout(options.timeoutMs))
   const requestedTokens = options.maxOutputTokens ?? 12_000
   const maxOutputTokens = resolution.outputTokenLimit
     ? Math.min(requestedTokens, resolution.outputTokenLimit)
@@ -634,6 +705,21 @@ async function requestText(
     }
 
     return text
+  } catch (error) {
+    // Se o abort foi disparado pelo nosso próprio timer, classificamos como
+    // TIMEOUT de forma determinística — mesmo que o SDK embrulhe o AbortError
+    // em outro tipo de erro.
+    if (timeout.signal.aborted) {
+      throw new GeminiIntegrationError({
+        code: "TIMEOUT",
+        message: "A Gemini demorou para responder. Tente novamente.",
+        httpStatus: 504,
+        technicalMessage: `A requisição ao modelo ${resolution.id} excedeu o tempo limite.`,
+        model: resolution.id,
+        compatibleModels: resolution.compatibleModels,
+      })
+    }
+    throw error
   } finally {
     timeout.clear()
   }

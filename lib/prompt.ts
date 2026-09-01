@@ -101,6 +101,7 @@ REGRAS OBRIGATÓRIAS:
 - Cada prompt visual deve mencionar assunto, público, estilo, composição e acessibilidade. Não inclua texto pequeno dentro da imagem.
 - Se desenho para colorir estiver ativo, peça preto e branco, fundo branco, contornos definidos, sem sombras e poucos detalhes.
 - Não solicite nem inclua nome de estudante, CPF, endereço ou informação médica.
+- NÃO gere cabeçalho nem formulário de identificação (Nome do Estudante, Nome do Aluno, Turma, Data, Professor(a), Nome da Escola, Escola, campos com linhas para preenchimento). Essas informações pertencem exclusivamente ao cabeçalho da aplicação. O conteúdo gerado deve ser apenas pedagógico (título, instruções, questões, alternativas, gabarito, justificativas, habilidades).
 - Retorne somente JSON válido aderente ao schema fornecido pela aplicação, sem markdown ou comentários.
 
 VALIDAÇÃO ANTES DE RESPONDER:

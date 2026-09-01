@@ -3,6 +3,10 @@ import "server-only"
 import OpenAI from "openai"
 import { isLessonPlanContent, type LessonPlanContent } from "@/lib/bncc-plan"
 
+// Timeout controlado para o fallback OpenAI: cada requisição não pode passar de
+// 45s e o SDK não faz retries automáticos (o fluxo de fallback já decide isso).
+const OPENAI_TIMEOUT_MS = 45_000
+
 export async function generateStructuredWithOpenAI<T>(
   prompt: string,
   validator: (value: unknown) => value is T,
@@ -11,7 +15,7 @@ export async function generateStructuredWithOpenAI<T>(
   const apiKey = process.env.OPENAI_API_KEY?.trim()
   if (!apiKey) throw new Error("OPENAI_API_KEY não configurada.")
 
-  const client = new OpenAI({ apiKey })
+  const client = new OpenAI({ apiKey, timeout: OPENAI_TIMEOUT_MS, maxRetries: 0 })
   const response = await client.chat.completions.create({
     model: "gpt-4o",
     messages: [{ role: "user", content: prompt }],

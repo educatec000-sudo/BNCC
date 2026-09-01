@@ -36,7 +36,7 @@ export const MATERIAL_INSTRUCTIONS: Record<MaterialType, string> = {
   pedagogical_project:
     "Produza exclusivamente um PROJETO PEDAGÓGICO completo, preferencialmente interdisciplinar: justificativa, problema, objetivos, público, áreas, metodologia, etapas, cronograma, recursos, avaliação e produto final.",
   activity:
-    "Produza exclusivamente uma ATIVIDADE pronta para o estudante. Inclua campos Nome, Turma e Data, instruções, questões numeradas e gabarito. Não inclua metodologia, desenvolvimento ou plano de aula.",
+    "Produza exclusivamente uma ATIVIDADE pronta para o estudante: título, instruções, questões numeradas e gabarito. Não inclua metodologia, desenvolvimento ou plano de aula. NÃO inclua campos de identificação (nome do estudante, turma, data, escola, professor): isso pertence ao cabeçalho da aplicação e não ao conteúdo.",
   assessment:
     "Produza exclusivamente um INSTRUMENTO AVALIATIVO (prova, avaliação diagnóstica, formativa, somativa, rubrica ou checklist conforme o pedido), com questões/itens, critérios e gabarito. Não produza plano de aula.",
   teaching_plan:
@@ -414,7 +414,6 @@ export function buildMaterialJsonSchema(analysis: RequestAnalysis): Record<strin
     case "activity":
       specific = {
         titulo: stringSchema, instrucoes: stringSchema,
-        camposIdentificacao: { type: "array", items: stringSchema, minItems: 3 },
         quantidadeQuestoes: { type: "integer", minimum: count || 1, maximum: count || 50 },
         questoes: exactArray(questionSchema, count),
         gabarito: exactArray({
@@ -423,12 +422,11 @@ export function buildMaterialJsonSchema(analysis: RequestAnalysis): Record<strin
           required: ["numero", "resposta", "explicacao"],
         }, count),
       }
-      required = ["titulo", "instrucoes", "camposIdentificacao", "quantidadeQuestoes", "questoes", "gabarito"]
+      required = ["titulo", "instrucoes", "quantidadeQuestoes", "questoes", "gabarito"]
       break
     case "assessment":
       specific = {
         titulo: stringSchema, tipoAvaliacao: stringSchema, instrucoes: stringSchema,
-        camposIdentificacao: { type: "array", items: stringSchema, minItems: 3 },
         criteriosGerais: stringArraySchema,
         quantidadeQuestoes: { type: "integer", minimum: count || 1, maximum: count || 50 },
         questoes: exactArray(questionSchema, count),
@@ -439,7 +437,7 @@ export function buildMaterialJsonSchema(analysis: RequestAnalysis): Record<strin
         }, count),
         rubrica: { type: "array", items: { type: "object", additionalProperties: false, properties: { criterio: stringSchema, niveis: stringArraySchema }, required: ["criterio", "niveis"] } },
       }
-      required = ["titulo", "tipoAvaliacao", "instrucoes", "camposIdentificacao", "criteriosGerais", "quantidadeQuestoes", "questoes", "gabarito", "rubrica"]
+      required = ["titulo", "tipoAvaliacao", "instrucoes", "criteriosGerais", "quantidadeQuestoes", "questoes", "gabarito", "rubrica"]
       break
     case "teaching_plan":
       specific = {

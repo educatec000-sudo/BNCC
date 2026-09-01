@@ -3,6 +3,8 @@ import type {
   GeneralCompetency,
   InclusionAccessibilityContent,
 } from "@/lib/bncc-plan"
+import { normalizeAlternativeList, normalizeAnswerLetter } from "@/lib/alternatives"
+import { stripIdentificationLines } from "@/lib/identification"
 
 export type MaterialType =
   | "lesson_plan"
@@ -265,4 +267,48 @@ export function isPlanningContent(value: unknown): value is PlanningContent {
 
 export function getPlanningContentTitle(content: PlanningContent): string {
   return content.metadata.titulo
+}
+
+/**
+ * Remove marcadores de letra das alternativas ("A) texto" → "texto") e
+ * normaliza a resposta do gabarito ("A)", "A.", "(A)" → "A") logo na entrada,
+ * garantindo que o conteúdo salvo nunca carregue a letra embutida no texto.
+ * Respostas abertas (texto livre) permanecem intactas.
+ *
+ * Também remove qualquer cabeçalho/formulário de identificação que a IA tenha
+ * gerado dentro do conteúdo (Nome do Estudante, Turma, Data, Escola, Professor,
+ * campos de preenchimento). Essas informações pertencem exclusivamente ao
+ * cabeçalho da aplicação.
+ */
+export function normalizePlanningContent(value: PlanningContent): PlanningContent {
+  if (value.materialType === "activity" || value.materialType === "assessment") {
+    const questoes = value.questoes.map((question) => ({
+      ...question,
+      enunciado: stripIdentificationLines(question.enunciado),
+      alternativas: normalizeAlternativeList(question.alternativas).map((alternative) => alternative.text),
+    }))
+    const gabarito = value.gabarito.map((answer) => ({
+      ...answer,
+      resposta: normalizeAnswerLetter(answer.resposta),
+    }))
+    return {
+      ...value,
+      instrucoes: stripIdentificationLines(value.instrucoes),
+      camposIdentificacao: [],
+      questoes,
+      gabarito,
+    } as PlanningContent
+  }
+
+  if (value.materialType === "other") {
+    return {
+      ...value,
+      secoes: value.secoes.map((section) => ({
+        ...section,
+        conteudo: stripIdentificationLines(section.conteudo),
+      })),
+    } as PlanningContent
+  }
+
+  return value
 }

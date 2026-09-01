@@ -101,9 +101,9 @@ export function PlanResult({ content }: PlanResultProps) {
         </CardHeader>
         <CardContent className="space-y-4">
           {[
-            { label: "ABERTURA", key: "abertura", color: "bg-green-50 border-green-200" },
-            { label: "DESENVOLVIMENTO", key: "desenvolvimento", color: "bg-blue-50 border-blue-200" },
-            { label: "FECHAMENTO", key: "fechamento", color: "bg-orange-50 border-orange-200" },
+            { label: "ABERTURA", key: "abertura", color: "bg-green-50 border-green-200 dark:bg-green-950/30 dark:border-green-900" },
+            { label: "DESENVOLVIMENTO", key: "desenvolvimento", color: "bg-blue-50 border-blue-200 dark:bg-blue-950/30 dark:border-blue-900" },
+            { label: "FECHAMENTO", key: "fechamento", color: "bg-orange-50 border-orange-200 dark:bg-orange-950/30 dark:border-orange-900" },
           ].map(({ label, key, color }) => {
             const step = content.sequenciaDidatica[
               key as keyof LessonPlanContent["sequenciaDidatica"]

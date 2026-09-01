@@ -8,7 +8,7 @@ import {
   validatePlanningContentForRequest,
   type RequestAnalysis,
 } from "@/lib/planning-templates"
-import { isPlanningContent, type PlanningContent } from "@/lib/planning-content"
+import { isPlanningContent, normalizePlanningContent, type PlanningContent } from "@/lib/planning-content"
 import { GeminiIntegrationError, toGeminiIntegrationError } from "@/lib/gemini"
 import {
   getFallbackTextAIProvider,
@@ -50,7 +50,7 @@ async function generateAndCorrect(
 
   const first = await generate(prompt)
   const firstValidation = validatePlanningContentForRequest(first, analysis)
-  if (firstValidation.valid) return { content: first, corrected: false }
+  if (firstValidation.valid) return { content: normalizePlanningContent(first), corrected: false }
 
   const correctionPrompt = `${prompt}
 
@@ -65,7 +65,7 @@ Gere novamente o JSON completo. Preserve o conteúdo válido, mas corrija o tipo
   const correctedValidation = validatePlanningContentForRequest(corrected, analysis)
   if (!correctedValidation.valid) throw invalidStructureError(correctedValidation.errors)
 
-  return { content: corrected, corrected: true }
+  return { content: normalizePlanningContent(corrected), corrected: true }
 }
 
 export async function generatePlanningContent(
@@ -99,7 +99,13 @@ ${JSON.stringify(schema)}`
     return { ...generated, analysis, provider: primary.id }
   } catch (primaryError) {
     const normalizedError = toGeminiIntegrationError(primaryError)
-    console.error(`[planning-ai] Provedor ${primary.id} falhou (${normalizedError.code}).`)
+    const upstreamInfo = normalizedError.upstreamStatus
+      ? ` · HTTP ${normalizedError.upstreamStatus}`
+      : ""
+    const modelInfo = normalizedError.model ? ` · modelo ${normalizedError.model}` : ""
+    console.error(
+      `[planning-ai] Provedor ${primary.id} falhou (${normalizedError.code}${upstreamInfo}${modelInfo}).`,
+    )
     if (!fallback) throw normalizedError
 
     try {

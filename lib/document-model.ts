@@ -16,12 +16,20 @@ export type DocumentBlock =
   | { type: "numbered"; items: string[] }
   | { type: "table"; headers: string[]; rows: string[][] }
   | { type: "image"; image: DocumentImage }
-  | { type: "questions"; questions: QuestionItem[]; images: DocumentImage[] }
+  | {
+      type: "questions"
+      questions: QuestionItem[]
+      images: DocumentImage[]
+      /** Gabarito indexado por número da questão (resposta/justificativa). */
+      answers?: { numero: number; resposta: string; justificativa: string }[]
+    }
 
 export interface DocumentSection {
   title: string
   blocks: DocumentBlock[]
   pageBreakBefore?: boolean
+  /** "pedagogical" separa BNCC/competências/inclusão da folha do aluno. */
+  kind?: "activity" | "pedagogical"
 }
 
 export interface PlanningDocumentModel {
@@ -58,33 +66,35 @@ function questionSection(
   title: string,
   questions: QuestionItem[],
   instructions: string,
-  fields: string[],
   images: DocumentImage[],
+  answers?: { numero: number; resposta: string; justificativa: string }[],
 ): DocumentSection {
+  // Sem campos de identificação aqui: o cabeçalho é responsabilidade exclusiva
+  // do editor da aplicação. O conteúdo contém apenas título/instruções/questões.
   return {
     title,
     blocks: [
-      { type: "paragraph", text: fields.map((field) => `${field}: __________________________`).join("    ") },
       { type: "paragraph", text: instructions, bold: true },
-      { type: "questions", questions, images },
+      { type: "questions", questions, images, answers },
     ],
   }
 }
 
-function answerRows(
+function answerList(
   answers: { numero: number; resposta: string; explicacao?: string; criterio?: string }[],
-) {
-  return answers.map((answer) => [
-    String(answer.numero),
-    answer.resposta,
-    answer.explicacao || answer.criterio || "",
-  ])
+): { numero: number; resposta: string; justificativa: string }[] {
+  return answers.map((answer) => ({
+    numero: answer.numero,
+    resposta: answer.resposta,
+    justificativa: answer.explicacao || answer.criterio || "",
+  }))
 }
 
 function commonSections(content: PlanningContent): DocumentSection[] {
   return [
     {
       title: "Habilidades e competências BNCC",
+      kind: "pedagogical",
       blocks: [
         {
           type: "table",
@@ -101,6 +111,7 @@ function commonSections(content: PlanningContent): DocumentSection[] {
     },
     {
       title: "Inclusão, acessibilidade e DUA",
+      kind: "pedagogical",
       blocks: [
         { type: "paragraph", text: content.inclusaoAcessibilidade.contexto },
         {
@@ -256,18 +267,13 @@ function sectionsFor(content: PlanningContent, images: DocumentImage[]): Documen
       break
     case "activity":
       sections = [
-        questionSection(content.titulo, content.questoes, content.instrucoes, content.camposIdentificacao, images),
-        {
-          title: "Gabarito",
-          pageBreakBefore: true,
-          blocks: [
-            {
-              type: "table",
-              headers: ["Questão", "Resposta", "Explicação"],
-              rows: answerRows(content.gabarito),
-            },
-          ],
-        },
+        questionSection(
+          content.titulo,
+          content.questoes,
+          content.instrucoes,
+          images,
+          answerList(content.gabarito),
+        ),
       ]
       break
     case "assessment":
@@ -276,20 +282,9 @@ function sectionsFor(content: PlanningContent, images: DocumentImage[]): Documen
           content.titulo,
           content.questoes,
           `${content.tipoAvaliacao}. ${content.instrucoes}`,
-          content.camposIdentificacao,
           images,
+          answerList(content.gabarito),
         ),
-        {
-          title: "Gabarito e critérios",
-          pageBreakBefore: true,
-          blocks: [
-            {
-              type: "table",
-              headers: ["Questão", "Resposta", "Critério"],
-              rows: answerRows(content.gabarito),
-            },
-          ],
-        },
         {
           title: "Rubrica",
           blocks: [

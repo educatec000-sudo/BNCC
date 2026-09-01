@@ -38,7 +38,7 @@ export function getMonthlyLimit(plan: PlanCode): number | null {
 }
 
 export function getImageUsageLimits() {
-  const free = readPositiveInteger("FREE_IMAGE_TOTAL_LIMIT", 2)
+  const free = readPositiveInteger("FREE_IMAGE_TOTAL_LIMIT", 20)
   const professor = readPositiveInteger("PROFESSOR_MONTHLY_IMAGE_LIMIT", 20)
   const premium = readPositiveInteger("PREMIUM_MONTHLY_IMAGE_LIMIT", 60)
   if (premium <= professor) {

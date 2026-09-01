@@ -72,7 +72,7 @@ export default async function PlanPage({
       </div>
 
       {query.notice && (
-        <div className="print:hidden p-4 bg-blue-50 border border-blue-200 rounded-lg text-blue-900">
+        <div className="print:hidden p-4 bg-blue-50 border border-blue-200 rounded-lg text-blue-900 dark:bg-blue-950/40 dark:border-blue-900 dark:text-blue-200">
           <p className="font-medium">{query.notice}</p>
           {query.notice.includes("2 planos gratuitos") && (
             <div className="flex flex-wrap gap-2 mt-3">

@@ -10,11 +10,13 @@ import {
 } from "@/lib/document-model"
 import {
   EDITOR_DOCUMENT_SCHEMA_VERSION,
+  dedupeEditorDocument,
   escapeEditorText,
   sanitizeEditorDocument,
   type EditorDocument,
   type EditorElement,
 } from "@/lib/editor-document"
+import { normalizeAlternativeList, normalizeAnswerLetter } from "@/lib/alternatives"
 
 export interface EditorPlanRecord {
   id?: string
@@ -79,24 +81,36 @@ function blockElements(block: DocumentBlock): EditorElement[] {
       alignment: "center",
     }]
   }
-  return block.questions.map((question) => ({
-    id: id("question"),
-    type: "question" as const,
-    number: question.numero,
-    content: escapeEditorText(question.enunciado),
-    alternatives: question.alternativas.map((alternative) => ({
-      id: id("alternative"),
-      content: escapeEditorText(alternative),
-    })),
-    responseLines: question.alternativas.length > 0 ? 0 : 2,
-    images: block.images
-      .filter((image) => image.placementKey === `question:${question.numero}` && image.assetId)
-      .map((image) => ({
-        assetId: image.assetId!,
-        widthPercent: image.widthPercent,
-        alignment: "center" as const,
+  const answerFor = (numero: number) =>
+    (block.answers || []).find((answer) => answer.numero === numero)
+  return block.questions.map((question) => {
+    const answer = answerFor(question.numero)
+    return {
+      id: id("question"),
+      type: "question" as const,
+      number: question.numero,
+      content: escapeEditorText(question.enunciado),
+      alternatives: normalizeAlternativeList(question.alternativas).map((alternative) => ({
+        id: id("alternative"),
+        letter: alternative.letter,
+        content: escapeEditorText(alternative.text),
       })),
-  }))
+      ...(answer
+        ? {
+            ...(answer.resposta.trim() ? { answer: normalizeAnswerLetter(answer.resposta) } : {}),
+            ...(answer.justificativa.trim() ? { justification: escapeEditorText(answer.justificativa) } : {}),
+          }
+        : {}),
+      responseLines: question.alternativas.length > 0 ? 0 : 2,
+      images: block.images
+        .filter((image) => image.placementKey === `question:${question.numero}` && image.assetId)
+        .map((image) => ({
+          assetId: image.assetId!,
+          widthPercent: image.widthPercent,
+          alignment: "center" as const,
+        })),
+    }
+  })
 }
 
 export function buildInitialEditorDocument(plan: EditorPlanRecord): EditorDocument {
@@ -106,8 +120,9 @@ export function buildInitialEditorDocument(plan: EditorPlanRecord): EditorDocume
 
 export function editorDocumentFromPlanningModel(model: PlanningDocumentModel): EditorDocument {
   const subject = model.identificationFields.find((field) => field.label === "Área/Disciplina")?.value || ""
+  const grade = model.identificationFields.find((field) => field.label === "Ano/Série")?.value || ""
   const topic = model.topic
-  return {
+  return dedupeEditorDocument({
     schemaVersion: EDITOR_DOCUMENT_SCHEMA_VERSION,
     title: escapeEditorText(model.title),
     topic,
@@ -115,24 +130,26 @@ export function editorDocumentFromPlanningModel(model: PlanningDocumentModel): E
     page: {
       size: "A4",
       orientation: model.recommendedOrientation,
-      marginTop: 20,
-      marginRight: 18,
-      marginBottom: 20,
-      marginLeft: 18,
+      marginTop: 15,
+      marginRight: 15,
+      marginBottom: 15,
+      marginLeft: 15,
       defaultFontFamily: "Arial",
       defaultFontSize: 11,
       lineHeight: 1.5,
     },
     header: {
       visible: true,
+      layout: "normal",
       fields: [
-        { id: "school", label: "NOME DA ESCOLA", value: "", visible: true },
-        { id: "student", label: "ALUNO(A)", value: "", visible: true },
-        { id: "class", label: "TURMA", value: "", visible: true },
-        { id: "teacher", label: "PROFESSOR(A)", value: "", visible: true },
-        { id: "subject", label: "DISCIPLINA", value: subject, visible: true },
-        { id: "date", label: "DATA", value: "", visible: true },
-        { id: "topic", label: "ASSUNTO", value: topic, visible: true },
+        { id: "school", label: "NOME DA ESCOLA", value: "", visible: true, row: 1, widthPercent: 100 },
+        { id: "student", label: "ALUNO(A)", value: "", visible: true, row: 2, widthPercent: 50 },
+        { id: "date", label: "DATA", value: "", visible: true, row: 2, widthPercent: 50 },
+        { id: "class", label: "TURMA", value: "", visible: true, row: 3, widthPercent: 50 },
+        { id: "teacher", label: "PROFESSOR(A)", value: "", visible: true, row: 3, widthPercent: 50 },
+        { id: "subject", label: "DISCIPLINA", value: subject, visible: true, row: 4, widthPercent: 50 },
+        { id: "grade", label: "SÉRIE/ANO", value: grade, visible: true, row: 4, widthPercent: 50 },
+        { id: "topic", label: "ASSUNTO", value: topic, visible: true, row: 5, widthPercent: 100 },
       ],
     },
     footer: {
@@ -146,9 +163,10 @@ export function editorDocumentFromPlanningModel(model: PlanningDocumentModel): E
       id: id("section"),
       title: escapeEditorText(section.title),
       pageBreakBefore: section.pageBreakBefore,
+      ...(section.kind === "pedagogical" ? { kind: "pedagogical" as const } : {}),
       elements: section.blocks.flatMap(blockElements),
     })),
-  }
+  })
 }
 
 export async function ensureEditorDocument(plan: EditorPlanRecord & { id: string; userId: string }) {

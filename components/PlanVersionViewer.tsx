@@ -106,7 +106,7 @@ export function PlanVersionViewer({
 
       <div role="tabpanel" aria-label={version === "adapted" ? "Material Adaptado" : "Material Editado"}>
         {version === "original" ? (
-          <div className="overflow-auto bg-slate-200 p-2 sm:p-5">
+          <div className="overflow-auto bg-muted p-2 sm:p-5">
             <DocumentRenderer document={document} assets={assets} />
           </div>
         ) : adapted ? (

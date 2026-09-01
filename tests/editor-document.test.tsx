@@ -58,7 +58,7 @@ function geometryDocument(): EditorDocument {
             type: "question",
             number: 1,
             content: "Qual das figuras geométricas abaixo possui exatamente 3 lados?",
-            alternatives: ["Círculo", "Quadrado", "Triângulo", "Retângulo"].map((content, index) => ({ id: `alternative-${index}`, content })),
+            alternatives: ["Círculo", "Quadrado", "Triângulo", "Retângulo"].map((content, index) => ({ id: `alternative-${index}`, letter: String.fromCharCode(65 + index), content })),
             responseLines: 0,
             images: [{ assetId: "geometry-asset", widthPercent: 75, alignment: "center" }],
           },
@@ -130,7 +130,7 @@ test("edição manual preserva referência do asset e sanitiza conteúdo rico", 
   assert.equal(question.type, "question")
   if (question.type !== "question") return
   question.content = '<strong>Qual figura possui 3 lados?</strong><script>alert("x")</script>'
-  question.alternatives.push({ id: "alternative-5", content: "Pentágono" })
+  question.alternatives.push({ id: "alternative-5", letter: "E", content: "Pentágono" })
   question.images[0].widthPercent = 55
   const sanitized = sanitizeEditorDocument(edited)
   assert.ok(sanitized)

@@ -90,17 +90,17 @@ export default function RegisterPage() {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="name">Nome completo</Label>
-              <Input id="name" placeholder="Maria Silva" value={name} onChange={e => setName(e.target.value)} required />
+              <Input id="name" autoComplete="name" placeholder="Maria Silva" value={name} onChange={e => setName(e.target.value)} required />
             </div>
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
-              <Input id="email" type="email" placeholder="professora@escola.com" value={email} onChange={e => setEmail(e.target.value)} required />
+              <Input id="email" type="email" autoComplete="email" placeholder="professora@escola.com" value={email} onChange={e => setEmail(e.target.value)} required />
             </div>
             <div className="space-y-2">
               <Label htmlFor="password">Senha</Label>
-              <Input id="password" type="password" placeholder="Mínimo 8 caracteres" minLength={8} value={password} onChange={e => setPassword(e.target.value)} required />
+              <Input id="password" type="password" autoComplete="new-password" placeholder="Mínimo 8 caracteres" minLength={8} value={password} onChange={e => setPassword(e.target.value)} required />
             </div>
-            {error && <p className="text-sm text-destructive">{error}</p>}
+            {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
             <Button type="submit" className="w-full h-11" disabled={loading}>
               {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               Criar conta gratuita

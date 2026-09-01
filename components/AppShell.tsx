@@ -16,6 +16,7 @@ import {
   UserRound,
 } from "lucide-react"
 import { Brand } from "@/components/Brand"
+import { ThemeToggle } from "@/components/ThemeToggle"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
@@ -49,6 +50,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
             <Brand />
             <nav className="flex items-center gap-1" aria-label="Navegação pública">
+              <ThemeToggle />
               <Button variant="ghost" size="sm" asChild>
                 <Link href="/assinatura">Planos</Link>
               </Button>
@@ -61,7 +63,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </nav>
           </div>
         </header>
-        <main className="min-h-[calc(100vh-4rem)]">{children}</main>
+        <main id="conteudo" tabIndex={-1} className="min-h-[calc(100vh-4rem)]">{children}</main>
       </div>
     )
   }
@@ -79,6 +81,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <Link
                 key={href}
                 href={href}
+                aria-current={active ? "page" : undefined}
                 className={cn(
                   "flex min-h-11 items-center gap-3 border-l-2 px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
                   active
@@ -97,19 +100,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <span className="flex h-9 w-9 items-center justify-center bg-primary/10 text-primary">
               <UserRound className="h-4 w-4" aria-hidden="true" />
             </span>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold">{session?.user?.name || "Professor"}</p>
               <p className="truncate text-xs text-muted-foreground">{session?.user?.email}</p>
             </div>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="w-full justify-start text-muted-foreground"
-            onClick={() => signOut({ callbackUrl: "/" })}
-          >
-            <LogOut className="mr-2 h-4 w-4" /> Sair
-          </Button>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 px-2 text-sm text-muted-foreground">
+              <ThemeToggle />
+              <span className="text-xs">Tema</span>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground"
+              onClick={() => signOut({ callbackUrl: "/" })}
+            >
+              <LogOut className="mr-2 h-4 w-4" /> Sair
+            </Button>
+          </div>
         </div>
       </aside>
 
@@ -117,6 +126,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b bg-background/95 px-4 backdrop-blur lg:hidden print:hidden">
           <Brand />
           <div className="flex items-center gap-1">
+            <ThemeToggle />
             <Button variant="ghost" size="icon" asChild>
               <Link href="/configuracoes" aria-label="Configurações">
                 <Settings className="h-5 w-5" />
@@ -133,7 +143,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <main className="min-h-screen pb-24 lg:pb-0">{children}</main>
+        <main id="conteudo" tabIndex={-1} className="min-h-screen pb-24 lg:pb-0">{children}</main>
       </div>
 
       <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t bg-background/98 px-1 pb-[env(safe-area-inset-bottom)] lg:hidden print:hidden" aria-label="Navegação móvel">
@@ -143,6 +153,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <Link
               key={href}
               href={href}
+              aria-current={active ? "page" : undefined}
               className={cn(
                 "flex min-h-16 flex-col items-center justify-center gap-1 px-1 text-[10px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
                 active ? "text-primary" : "text-muted-foreground",
@@ -155,6 +166,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         })}
         <Link
           href="/assinatura"
+          aria-current={pathname === "/assinatura" ? "page" : undefined}
           className={cn(
             "flex min-h-16 flex-col items-center justify-center gap-1 px-1 text-[10px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
             pathname === "/assinatura" ? "text-primary" : "text-muted-foreground",

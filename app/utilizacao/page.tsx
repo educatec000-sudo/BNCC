@@ -100,7 +100,7 @@ export default async function UsagePage() {
           <p className="mt-2 text-xs text-muted-foreground">{access.imageRemaining} gerações de imagem disponíveis.</p>
         </div>
         {access.message && (
-          <div className="mt-5 border-l-4 border-amber-500 bg-amber-50 p-4 text-sm text-amber-950">
+          <div className="mt-5 border-l-4 border-amber-500 bg-amber-50 p-4 text-sm text-amber-950 dark:bg-amber-950/40 dark:text-amber-200">
             {access.message}
           </div>
         )}
