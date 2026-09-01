@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import type { LucideIcon } from "lucide-react"
 import {
@@ -321,27 +321,44 @@ export function PlanningWizard({ initialAccess, initialData }: PlanningWizardPro
     setPedagogicalProfile((current) => ({ ...current, [key]: value }))
   }
 
+  const submittingRef = useRef(false)
+
   const submit = async () => {
+    // Blindagem contra envio duplicado (duplo clique antes do re-render): o
+    // estado `loading` é assíncrono e um segundo clique no mesmo instante poderia
+    // disparar uma segunda requisição.
+    if (submittingRef.current) return
+    submittingRef.current = true
+
     if (planningTypeId !== "outro" && topic.trim().length < 2) {
       setError("Informe o assunto da aula para que a IA possa gerar um material mais preciso.")
+      submittingRef.current = false
       return
     }
     if (request.trim().length < 10) {
       setError("Descreva o que você deseja criar com pelo menos 10 caracteres.")
+      submittingRef.current = false
       return
     }
     if (!initialAccess.canGenerate) {
       setError(initialAccess.message || "Você não possui geração disponível.")
+      submittingRef.current = false
       return
     }
 
     setLoading(true)
     setError("")
 
+    // Limite no cliente (pouco acima do maxDuration=300s da rota): se o servidor
+    // não responder, o usuário recebe uma mensagem clara em vez de um overlay sem fim.
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 310_000)
+
     try {
       const response = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
           stageId,
           areaId,
@@ -377,10 +394,16 @@ export function PlanningWizard({ initialAccess, initialData }: PlanningWizardPro
 
       const notice = data.message ? `?notice=${encodeURIComponent(data.message)}` : ""
       router.push(`/planos/${data.plan.id}${notice}`)
-    } catch {
-      setError("Não foi possível conectar ao servidor. Tente novamente.")
+    } catch (error) {
+      setError(
+        error instanceof DOMException && error.name === "AbortError"
+          ? "O servidor demorou demais para responder. Tente novamente em instantes."
+          : "Não foi possível conectar ao servidor. Tente novamente.",
+      )
     } finally {
+      clearTimeout(timer)
       setLoading(false)
+      submittingRef.current = false
     }
   }
 

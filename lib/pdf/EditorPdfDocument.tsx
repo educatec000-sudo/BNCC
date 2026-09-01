@@ -17,7 +17,7 @@ import {
   type EditorImageReference,
   type EditorTextStyle,
 } from "@/lib/editor-document"
-import { estimateElementHeight, estimateQuestionHeight, groupSectionElements, isTwoColumns, layoutFlow } from "@/lib/document-layout"
+import { buildFlowSpec, groupSectionElements, isTwoColumns, layoutFlow, pageGeometry } from "@/lib/document-layout"
 
 export interface ResolvedEditorAsset {
   id: string
@@ -344,7 +344,9 @@ export function EditorPdfDocument({
   ].filter(Boolean).join(" · ")
   const mm = 2.834645669
   const pxToPt = 0.75
-  const columnGap = document.page.columnGap ?? 24
+  const geometry = pageGeometry(document)
+  const columnGapPt = geometry.columnGapPx * pxToPt
+  const columnWidthPt = geometry.columnWidthPx * pxToPt
   const columnSeparator = document.page.columnSeparator === "line"
   const twoColumns = isTwoColumns(document)
   const resolvedOrientation = orientation || document.page.orientation
@@ -352,8 +354,8 @@ export function EditorPdfDocument({
   const pageHeightPt = resolvedOrientation === "landscape"
     ? (document.page.size === "LETTER" ? 612 : 595)
     : (document.page.size === "LETTER" ? 792 : 842)
-  const padBottomPt = Math.max(document.page.marginBottom * mm, document.footer.visible ? 42 : 20)
-  const contentHeightPt = Math.max(60, pageHeightPt - document.page.marginTop * mm - padBottomPt)
+  const padBottomPt = Math.max(geometry.marginBottomMm * mm, document.footer.visible ? 42 : 20)
+  const contentHeightPt = Math.max(60, pageHeightPt - geometry.marginTopMm * mm - padBottomPt)
 
   const pageStyle = [
     styles.page,
@@ -361,10 +363,10 @@ export function EditorPdfDocument({
       fontFamily: fontFromFamily(document.page.defaultFontFamily),
       fontSize: document.page.defaultFontSize,
       lineHeight: document.page.lineHeight,
-      paddingTop: document.page.marginTop * mm,
-      paddingRight: document.page.marginRight * mm,
+      paddingTop: geometry.marginTopMm * mm,
+      paddingRight: geometry.marginRightMm * mm,
       paddingBottom: padBottomPt,
-      paddingLeft: document.page.marginLeft * mm,
+      paddingLeft: geometry.marginLeftMm * mm,
     },
   ]
 
@@ -474,111 +476,31 @@ export function EditorPdfDocument({
 
   // ===== Duas colunas — Simulado: fluxo vertical independente por coluna =====
   // O MESMO algoritmo do editor (layoutFlow) é aplicado aqui, com alturas
-  // estimadas por questão, sem emparelhar questões em linhas fixas.
-  type PdfFlowBlock = { kind: "full" | "question"; id: string; height: number; breakBefore: boolean; node: React.ReactNode }
-  const flow: PdfFlowBlock[] = []
-  flow.push({
-    kind: "full",
-    id: "__title__",
-    height: 24,
-    breakBefore: false,
-    node: <View style={styles.title}><RichText html={document.title} baseStyle={{ bold: true }} /></View>,
-  })
-  if (document.subtitle) {
-    flow.push({ kind: "full", id: "__subtitle__", height: 14, breakBefore: false, node: <Text style={styles.subtitle}>{document.subtitle}</Text> })
-  }
-  if (headerView) {
-    const headerHeight = headerFieldRows(fields).reduce((sum, row) => {
-      const metrics = headerFieldMetrics(row[0], document.header.layout || "normal")
-      return sum + metrics.minHeight + metrics.spacingAfter
-    }, 14)
-    flow.push({ kind: "full", id: "__header__", height: headerHeight, breakBefore: false, node: headerView })
-  }
+  // estimadas e a geometria de página compartilhada (pageGeometry/buildFlowSpec),
+  // sem emparelhar questões em linhas fixas.
+  const spec = buildFlowSpec(document, geometry)
+  const pages = layoutFlow(
+    spec.map((block) => ({ kind: block.kind, id: block.id, height: block.height * pxToPt, breakBefore: block.breakBefore })),
+    contentHeightPt,
+  )
 
-  let pendingBreak = false
-  let pedagogicalStarted = false
-  document.sections.forEach((section) => {
-    // Seções pedagógicas (BNCC/inclusão/gabarito) ficam SEMPRE em uma coluna.
-    // Quebra OBRIGATÓRIA somente na primeira seção pedagógica; as demais fluem
-    // naturalmente (paginação por altura), sem páginas exclusivas por seção.
-    const isPedagogical = section.kind === "pedagogical"
-    const isFirstPedagogical = isPedagogical && !pedagogicalStarted
-    if (isPedagogical) pedagogicalStarted = true
-    const forceBreak = isFirstPedagogical && pedagogicalBreakEnabled
-    const titleVisible = plainTextFromHtml(section.title).trim().length > 0
-    const sectionBreak = section.pageBreakBefore === true || pendingBreak || forceBreak
-    if (titleVisible) {
-      flow.push({
-        kind: "full",
-        id: `section-title-${section.id}`,
-        height: 24,
-        breakBefore: sectionBreak,
-        node: <View style={styles.sectionTitle}><RichText html={section.title} baseStyle={{ bold: true }} /></View>,
-      })
-      pendingBreak = false
-    } else {
-      pendingBreak = sectionBreak
+  const nodeById = new Map<string, React.ReactNode>()
+  nodeById.set("__title__", <View style={styles.title}><RichText html={document.title} baseStyle={{ bold: true }} /></View>)
+  if (document.subtitle) nodeById.set("__subtitle__", <Text style={styles.subtitle}>{document.subtitle}</Text>)
+  if (headerView) nodeById.set("__header__", headerView)
+  for (const section of document.sections) {
+    if (plainTextFromHtml(section.title).trim()) {
+      nodeById.set(
+        `section-title-${section.id}`,
+        <View style={styles.sectionTitle}><RichText html={section.title} baseStyle={{ bold: true }} /></View>,
+      )
     }
-    for (const group of groupSectionElements(section.elements)) {
-      if (group.kind === "full") {
-        if (group.element.type === "pageBreak") {
-          pendingBreak = true
-          continue
-        }
-        flow.push({
-          kind: "full",
-          id: group.element.id,
-          height: estimateElementHeight(group.element, document) * pxToPt,
-          breakBefore: pendingBreak,
-          node: <ElementView element={group.element} document={document} assets={assetMap} />,
-        })
-        pendingBreak = false
-      } else {
-        for (const question of group.questions) {
-          const height = Math.min(contentHeightPt, estimateQuestionHeight(question) * pxToPt * 1.06)
-          if (isPedagogical) {
-            flow.push({
-              kind: "full",
-              id: question.id,
-              height,
-              breakBefore: pendingBreak,
-              node: <ElementView element={question} document={document} assets={assetMap} />,
-            })
-          } else {
-            flow.push({
-              kind: "question",
-              id: question.id,
-              height,
-              breakBefore: pendingBreak,
-              node: <ElementView element={question} document={document} assets={assetMap} />,
-            })
-          }
-          pendingBreak = false
-        }
-      }
+    for (const element of section.elements) {
+      if (element.type === "pageBreak") continue
+      nodeById.set(element.id, <ElementView element={element} document={document} assets={assetMap} />)
     }
-  })
-
-  // Gabarito derivado entra no MESMO fluxo pedagógico de uma coluna.
-  const gabaritoId = "__gabarito__"
-  if (gabaritoQuestions.length > 0) {
-    const isFirstPedagogical = !pedagogicalStarted
-    const forceBreak = isFirstPedagogical && pedagogicalBreakEnabled
-    const totalHeight = gabaritoQuestions.reduce(
-      (sum, question) => sum + 18 + Math.max(1, Math.ceil(plainTextFromHtml(question.justification || "").length / 70)) * 14,
-      26,
-    )
-    flow.push({
-      kind: "full",
-      id: gabaritoId,
-      height: Math.min(contentHeightPt, totalHeight * pxToPt),
-      breakBefore: pendingBreak || forceBreak,
-      node: renderGabarito(false),
-    })
   }
-
-  const pages = layoutFlow(flow.map((block) => ({ kind: block.kind, id: block.id, height: block.height, breakBefore: block.breakBefore })), contentHeightPt)
-  const nodeById = new Map(flow.map((block) => [block.id, block.node]))
+  if (gabaritoQuestions.length > 0) nodeById.set("__gabarito__", renderGabarito(false))
 
   return (
     <Document
@@ -587,25 +509,37 @@ export function EditorPdfDocument({
       author={teacher || "+ Educação"}
       creator="+ Educação · BNCC Planner"
     >
-      {pages.map((page, pageIndex) => (
-        <Page key={pageIndex} size={pageSize} orientation={resolvedOrientation} wrap style={pageStyle}>
-          {footerView}
-          {page.full.map((item) => <React.Fragment key={item.id}>{nodeById.get(item.id)}</React.Fragment>)}
-          {(page.columns[0]?.length || page.columns[1]?.length) ? (
-            <View style={{ flexDirection: "row", alignItems: "stretch" }}>
-              <View style={{ flex: 1 }}>
-                {(page.columns[0] ?? []).map((item) => <React.Fragment key={item.id}>{nodeById.get(item.id)}</React.Fragment>)}
+      {pages.map((page, pageIndex) => {
+        const left = page.columns[0] ?? []
+        const right = page.columns[1] ?? []
+        const columnHeightPt = Math.min(
+          contentHeightPt,
+          Math.max(
+            left.reduce((sum, item) => sum + item.height, 0),
+            right.reduce((sum, item) => sum + item.height, 0),
+          ),
+        )
+        return (
+          <Page key={pageIndex} size={pageSize} orientation={resolvedOrientation} wrap style={pageStyle}>
+            {footerView}
+            {page.full.map((item) => <React.Fragment key={item.id}>{nodeById.get(item.id)}</React.Fragment>)}
+            {left.length > 0 || right.length > 0 ? (
+              <View style={{ flexDirection: "row" }}>
+                <View style={{ width: columnWidthPt }}>
+                  {left.map((item) => <React.Fragment key={item.id}>{nodeById.get(item.id)}</React.Fragment>)}
+                </View>
+                <View style={{ width: columnGapPt, flexDirection: "row", justifyContent: "center" }}>
+                  {columnSeparator ? <View style={{ width: 0.75, height: columnHeightPt, backgroundColor: "#cbd5e1" }} /> : null}
+                </View>
+                <View style={{ width: columnWidthPt }}>
+                  {right.map((item) => <React.Fragment key={item.id}>{nodeById.get(item.id)}</React.Fragment>)}
+                </View>
               </View>
-              <View style={{ width: columnGap, justifyContent: "center" }}>
-                {columnSeparator ? <View style={{ width: 0.75, alignSelf: "stretch", backgroundColor: "#cbd5e1" }} /> : null}
-              </View>
-              <View style={{ flex: 1 }}>
-                {(page.columns[1] ?? []).map((item) => <React.Fragment key={item.id}>{nodeById.get(item.id)}</React.Fragment>)}
-              </View>
-            </View>
-          ) : null}
-        </Page>
-      ))}
+            ) : null}
+            {page.after.map((item) => <React.Fragment key={item.id}>{nodeById.get(item.id)}</React.Fragment>)}
+          </Page>
+        )
+      })}
     </Document>
   )
 }

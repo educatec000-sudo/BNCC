@@ -10,10 +10,12 @@ import type {
 export const openAITextProvider: TextAIProvider = {
   id: "openai",
   generateStructured<T>(request: StructuredGenerationRequest<T>) {
+    request.onModel?.("gpt-4o")
     return generateStructuredWithOpenAI(
       request.prompt,
       request.validator,
       request.formatName,
+      request.timeoutMs,
     )
   },
 }

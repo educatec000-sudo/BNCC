@@ -810,19 +810,11 @@ export async function generateGeminiText(
   return result.text
 }
 
-export async function generateStructuredWithGemini<T>(
-  prompt: string,
-  schema: unknown,
+export function parseStructuredGeminiResponse<T>(
+  text: string,
   validator: (value: unknown) => value is T,
   formatName: string,
-  maxOutputTokens = 16_000,
-): Promise<T> {
-  const text = await generateGeminiText(prompt, {
-    responseJson: true,
-    responseJsonSchema: schema,
-    maxOutputTokens,
-  })
-
+): T {
   let parsed: unknown
   try {
     parsed = JSON.parse(text)
@@ -845,6 +837,24 @@ export async function generateStructuredWithGemini<T>(
   }
 
   return parsed
+}
+
+export async function generateStructuredWithGemini<T>(
+  prompt: string,
+  schema: unknown,
+  validator: (value: unknown) => value is T,
+  formatName: string,
+  maxOutputTokens = 16_000,
+  timeoutMs?: number,
+): Promise<T> {
+  const text = await generateGeminiText(prompt, {
+    responseJson: true,
+    responseJsonSchema: schema,
+    maxOutputTokens,
+    timeoutMs,
+  })
+
+  return parseStructuredGeminiResponse(text, validator, formatName)
 }
 
 export async function generateWithGemini(prompt: string): Promise<LessonPlanContent> {

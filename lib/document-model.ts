@@ -268,7 +268,9 @@ function sectionsFor(content: PlanningContent, images: DocumentImage[]): Documen
     case "activity":
       sections = [
         questionSection(
-          content.titulo,
+          // Sem título de seção: o título da atividade já aparece no cabeçalho do
+          // documento (metadata.titulo). Gerar o título aqui duplicaria o conteúdo.
+          "",
           content.questoes,
           content.instrucoes,
           images,
@@ -279,7 +281,7 @@ function sectionsFor(content: PlanningContent, images: DocumentImage[]): Documen
     case "assessment":
       sections = [
         questionSection(
-          content.titulo,
+          "",
           content.questoes,
           `${content.tipoAvaliacao}. ${content.instrucoes}`,
           images,

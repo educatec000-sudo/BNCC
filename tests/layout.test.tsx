@@ -4,12 +4,13 @@ import React from "react"
 import { readFile } from "node:fs/promises"
 import { renderToStaticMarkup } from "react-dom/server"
 import {
+  buildFlowSpec,
   groupSectionElements,
   isTwoColumns,
   layoutFlow,
   layoutQuestionColumns,
   mmToPx,
-  pageDimensionsMm,
+  pageGeometry,
   paginateBlocks,
   estimateQuestionHeight,
 } from "../lib/document-layout"
@@ -283,7 +284,7 @@ test("19. cabeçalho: alterar, reordenar, ocultar e redimensionar campos", () =>
 test("20. salvar preserva colunas, margens, fonte, espaçamento, separador e alinhamento", () => {
   const document = makeDocument({
     columns: "two",
-    columnGap: 32,
+    columnGap: 8,
     columnSeparator: "line",
     marginTop: 25,
     defaultFontFamily: "Georgia",
@@ -297,7 +298,7 @@ test("20. salvar preserva colunas, margens, fonte, espaçamento, separador e ali
   assert.ok(sanitized)
   const page = sanitized.page
   assert.equal(page.columns, "two")
-  assert.equal(page.columnGap, 32)
+  assert.equal(page.columnGap, 8)
   assert.equal(page.columnSeparator, "line")
   assert.equal(page.marginTop, 25)
   assert.equal(page.defaultFontFamily, "Georgia")
@@ -312,11 +313,12 @@ test("20. salvar preserva colunas, margens, fonte, espaçamento, separador e ali
 test("20b. margens padrão são 15 mm quando não informadas", () => {
   const document = makeDocument()
   // remove margens para testar o padrão do sanitizador
-  const raw = JSON.parse(JSON.stringify(document)) as Record<string, any>
-  delete raw.page.marginTop
-  delete raw.page.marginRight
-  delete raw.page.marginBottom
-  delete raw.page.marginLeft
+  const raw = JSON.parse(JSON.stringify(document)) as EditorDocument
+  const rawPage = raw.page as Partial<EditorDocument["page"]>
+  delete rawPage.marginTop
+  delete rawPage.marginRight
+  delete rawPage.marginBottom
+  delete rawPage.marginLeft
   const sanitized = sanitizeEditorDocument(raw)
   assert.ok(sanitized)
   assert.equal(sanitized.page.marginTop, 15)
@@ -325,13 +327,19 @@ test("20b. margens padrão são 15 mm quando não informadas", () => {
   assert.equal(sanitized.page.marginLeft, 15)
 })
 
-test("21. espaçamento entre colunas é sanitizado (8..80)", () => {
-  const small = sanitizeEditorDocument(makeDocument({ columns: "two", columnGap: 2 }))!
-  assert.equal(small.page.columnGap, 8)
+test("21. espaçamento entre colunas é sanitizado em mm (2..20) com migração de px legado", () => {
+  const small = sanitizeEditorDocument(makeDocument({ columns: "two", columnGap: 1 }))!
+  assert.equal(small.page.columnGap, 2)
   const big = sanitizeEditorDocument(makeDocument({ columns: "two", columnGap: 999 }))!
-  assert.equal(big.page.columnGap, 80)
-  const ok = sanitizeEditorDocument(makeDocument({ columns: "two", columnGap: 32 }))!
-  assert.equal(ok.page.columnGap, 32)
+  assert.equal(big.page.columnGap, 20)
+  const ok = sanitizeEditorDocument(makeDocument({ columns: "two", columnGap: 8 }))!
+  assert.equal(ok.page.columnGap, 8)
+  // valor legado em px (padrão antigo 24px) é convertido para mm
+  const legacy = sanitizeEditorDocument(makeDocument({ columns: "two", columnGap: 24 }))!
+  assert.equal(legacy.page.columnGap, 6)
+  // valor padrão quando ausente é 8 mm
+  const absent = sanitizeEditorDocument(makeDocument({ columns: "two" }))!
+  assert.equal(absent.page.columnGap, 8)
 })
 
 test("22. margens pequenas e grandes são recalculadas dentro dos limites (8..50)", () => {
@@ -341,14 +349,21 @@ test("22. margens pequenas e grandes são recalculadas dentro dos limites (8..50
   assert.equal(big.page.marginLeft, 50)
 })
 
-test("23. largura da coluna usa página, margens e espaçamento", () => {
-  const document = makeDocument({ columns: "two", marginLeft: 20, marginRight: 20, columnGap: 24 })
-  const dimensions = pageDimensionsMm(document)
-  const usable = mmToPx(dimensions.width) - mmToPx(20) - mmToPx(20)
-  const columnWidth = (usable - 24) / 2
-  assert.ok(columnWidth > 0)
-  assert.ok(columnWidth < usable)
-  assert.ok(Math.abs(columnWidth - (usable - 24) / 2) < 1e-6)
+test("23. largura da coluna usa página, margens e espaçamento (fonte única)", () => {
+  const document = makeDocument({ columns: "two", marginLeft: 20, marginRight: 20, columnGap: 8 })
+  const geometry = pageGeometry(document)
+  // A4 = 210 mm; área útil = 210 - 20 - 20 = 170 mm.
+  const usableMm = 210 - 20 - 20
+  const usable = mmToPx(usableMm)
+  const gap = mmToPx(8)
+  const columnWidth = (usable - gap) / 2
+  assert.ok(geometry.usableWidthPx > 0)
+  assert.ok(Math.abs(geometry.usableWidthPx - usable) < 1e-6)
+  assert.ok(Math.abs(geometry.columnWidthPx - columnWidth) < 1e-6)
+  // margens idênticas em mm e px
+  assert.equal(geometry.marginLeftMm, 20)
+  assert.equal(geometry.marginRightMm, 20)
+  assert.ok(Math.abs(geometry.marginLeftPx - mmToPx(20)) < 1e-6)
 })
 
 test("24. reabrir atividade preserva ordem, linhas, larguras e visibilidade do cabeçalho", () => {
@@ -390,22 +405,48 @@ test("26. uma coluna: preview sem contêiner de colunas", () => {
 test("27. separador de colunas (linha discreta) aparece no preview", () => {
   const document = makeDocument({ columns: "two", columnSeparator: "line" })
   const html = renderToStaticMarkup(<DocumentRenderer document={document} assets={[]} />)
-  assert.match(html, /column-rule/)
+  assert.match(html, /document-column-separator/)
+  // sem separador não deve aparecer a linha
+  const off = makeDocument({ columns: "two" })
+  const htmlOff = renderToStaticMarkup(<DocumentRenderer document={off} assets={[]} />)
+  assert.doesNotMatch(htmlOff, /document-column-separator/)
 })
 
 test("28. impressão usa regras CSS de colunas, quebra de coluna e página", async () => {
   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8")
-  assert.match(css, /\.document-question-columns[\s\S]*break-inside:\s*avoid-column/)
+  assert.match(css, /\.document-question-columns[\s\S]*break-inside:\s*avoid/)
   assert.match(css, /\.document-question-cell[\s\S]*break-inside:\s*avoid/)
   assert.match(css, /@media print/)
+  assert.match(css, /\.print-document[\s\S]*overflow:\s*hidden/)
+})
+
+test("28b. buildFlowSpec marca questões em colunas e pedagógicas em uma coluna, com quebra única", () => {
+  const document = makeDocument({ columns: "two" })
+  document.sections = [
+    { id: "activity", title: "QUESTÕES", elements: [makeQuestion("q1", 1, "Q1"), makeQuestion("q2", 2, "Q2")] },
+    { id: "bncc", title: "Habilidades e competências BNCC", kind: "pedagogical", elements: [makeQuestion("q3", 3, "Q3")] },
+  ]
+  const spec = buildFlowSpec(document)
+  const ids = spec.map((block) => block.id)
+  // questões da atividade são "question" (entram nas colunas)
+  assert.equal(spec.find((block) => block.id === "q1")?.kind, "question")
+  assert.equal(spec.find((block) => block.id === "q2")?.kind, "question")
+  // questão pedagógica é "full" (uma coluna)
+  assert.equal(spec.find((block) => block.id === "q3")?.kind, "full")
+  // quebra obrigatória exatamente uma vez, antes do título da seção pedagógica
+  const breaks = spec.filter((block) => block.breakBefore)
+  assert.equal(breaks.length, 1)
+  assert.match(breaks[0].id, /section-title-bncc/)
+  assert.ok(ids.indexOf("section-title-bncc") < ids.indexOf("q3"))
 })
 
 test("29. PDF usa o mesmo algoritmo de fluxo em colunas (nada de questionRows)", async () => {
   const pdf = await readFile(new URL("../lib/pdf/EditorPdfDocument.tsx", import.meta.url), "utf8")
   assert.match(pdf, /layoutFlow\(/)
-  assert.match(pdf, /estimateQuestionHeight\(/)
+  assert.match(pdf, /buildFlowSpec\(/)
+  assert.match(pdf, /pageGeometry\(/)
+  assert.match(pdf, /columnWidthPt/)
   assert.match(pdf, /columnSeparator/)
-  assert.match(pdf, /groupSectionElements\(/)
   assert.match(pdf, /isTwoColumns\(document\)/)
   assert.doesNotMatch(pdf, /questionRows\(/)
 })
@@ -487,6 +528,12 @@ test("35. seção pedagógica com questões fica em UMA coluna mesmo com simulad
   assert.match(html, /Questão pedagógica/)
 })
 
+// Divide o HTML renderizado por páginas (cada <article class="print-document">).
+// Não corta em "</article>" porque as questões também são <article> aninhadas.
+function pageChunks(html: string): string[] {
+  return html.split(/<article class="print-document/).slice(1)
+}
+
 test("36. seção pedagógica inicia em nova página por padrão e pode continuar na mesma", () => {
   const withBreak = makeDocument({ columns: "two" })
   withBreak.sections = [
@@ -494,7 +541,11 @@ test("36. seção pedagógica inicia em nova página por padrão e pode continua
     { id: "bncc", title: "Habilidades e competências BNCC", kind: "pedagogical", elements: [{ id: "t1", type: "table", headers: ["C"], rows: [["x"]] }] },
   ]
   const htmlBreak = renderToStaticMarkup(<DocumentRenderer document={withBreak} assets={[]} />)
-  assert.match(htmlBreak, /break-before-page/)
+  const pagesBreak = pageChunks(htmlBreak)
+  assert.equal(pagesBreak.length, 2)
+  assert.match(pagesBreak[0], /Questão 1/)
+  assert.doesNotMatch(pagesBreak[0], /Habilidades e competências BNCC/)
+  assert.match(pagesBreak[1], /Habilidades e competências BNCC/)
 
   const withoutBreak = makeDocument({ columns: "two", pedagogicalPageBreakBefore: false })
   withoutBreak.sections = [
@@ -502,7 +553,10 @@ test("36. seção pedagógica inicia em nova página por padrão e pode continua
     { id: "bncc", title: "Habilidades e competências BNCC", kind: "pedagogical", elements: [{ id: "t1", type: "table", headers: ["C"], rows: [["x"]] }] },
   ]
   const htmlSame = renderToStaticMarkup(<DocumentRenderer document={withoutBreak} assets={[]} />)
-  assert.doesNotMatch(htmlSame, /break-before-page/)
+  const pagesSame = pageChunks(htmlSame)
+  assert.equal(pagesSame.length, 1)
+  assert.match(pagesSame[0], /Questão 1/)
+  assert.match(pagesSame[0], /Habilidades e competências BNCC/)
 })
 
 test("36b. APENAS UMA quebra: várias seções pedagógicas + gabarito fluem sem páginas exclusivas", () => {
@@ -518,25 +572,29 @@ test("36b. APENAS UMA quebra: várias seções pedagógicas + gabarito fluem sem
   questions[0].answer = "A"
   questions[0].justification = "Explicação"
   const html = renderToStaticMarkup(<DocumentRenderer document={document} assets={[]} />)
-  // exatamente UMA quebra obrigatória (antes da primeira seção pedagógica)
-  assert.equal((html.match(/break-before-page/g) || []).length, 1)
-  // gabarito presente e fluindo na mesma região pedagógica (sem quebra própria)
-  assert.match(html, /Gabarito/)
-  assert.match(html, /Inclusão, acessibilidade e DUA/)
-  assert.match(html, /Habilidades e competências BNCC/)
+  const pages = pageChunks(html)
+  // página 1 = atividade; página 2 = BNCC + Inclusão + Gabarito juntos (fluxo natural)
+  assert.equal(pages.length, 2)
+  assert.match(pages[0], /Questão 1/)
+  assert.doesNotMatch(pages[0], /Habilidades e competências BNCC/)
+  assert.match(pages[1], /Habilidades e competências BNCC/)
+  assert.match(pages[1], /Inclusão, acessibilidade e DUA/)
+  assert.match(pages[1], /Gabarito/)
 })
 
 test("37. PDF separa a seção pedagógica (nova página + uma coluna) com quebra única", async () => {
   const pdf = await readFile(new URL("../lib/pdf/EditorPdfDocument.tsx", import.meta.url), "utf8")
   assert.match(pdf, /section\.kind === "pedagogical"/)
   assert.match(pdf, /pedagogicalPageBreakBefore !== false/)
-  assert.match(pdf, /isPedagogical/)
-  // quebra obrigatória apenas na PRIMEIRA seção pedagógica
+  assert.match(pdf, /buildFlowSpec\(/)
   assert.match(pdf, /firstPedagogicalIndex/)
-  assert.match(pdf, /pedagogicalStarted/)
   // gabarito deriva do fluxo, sem página exclusiva nem break próprio
   assert.match(pdf, /renderGabarito\(/)
   assert.doesNotMatch(pdf, /gabaritoView\s*&&\s*\(\s*<Page/)
+  // a lógica de quebra única vive na fonte compartilhada (document-layout)
+  const layout = await readFile(new URL("../lib/document-layout.ts", import.meta.url), "utf8")
+  assert.match(layout, /isFirstPedagogical/)
+  assert.match(layout, /pedagogicalStarted/)
 })
 
 test("38. editor marca a separação atividade/pedagógica e expõe o controle", async () => {

@@ -68,7 +68,7 @@ import {
   type EditorTextStyle,
 } from "@/lib/editor-document"
 import { alternativeLetter, normalizeAlternativeText } from "@/lib/alternatives"
-import { groupSectionElements, isTwoColumns, layoutFlow, mmToPx, pageDimensionsMm, type FlowPage } from "@/lib/document-layout"
+import { groupSectionElements, isTwoColumns, layoutFlow, pageGeometry, type FlowPage } from "@/lib/document-layout"
 import { IMAGE_STYLES } from "@/lib/image-options"
 import { cn } from "@/lib/utils"
 
@@ -806,15 +806,16 @@ export function StructuredContentEditor({
   }
 
   // ===================== Canvas A4 paginado =====================
-  const pageDim = pageDimensionsMm(documentValue)
-  const pageWidthPx = mmToPx(pageDim.width)
-  const pageHeightPx = mmToPx(pageDim.height)
-  const padTop = mmToPx(documentValue.page.marginTop)
-  const padRight = mmToPx(documentValue.page.marginRight)
-  const padBottom = mmToPx(documentValue.page.marginBottom)
-  const padLeft = mmToPx(documentValue.page.marginLeft)
-  const contentWidth = Math.max(120, pageWidthPx - padLeft - padRight)
-  const contentHeight = Math.max(120, pageHeightPx - padTop - padBottom)
+  // Fonte única de geometria (mesma usada por Preview, Impressão e PDF).
+  const geometry = pageGeometry(documentValue)
+  const pageWidthPx = geometry.pageWidthPx
+  const pageHeightPx = geometry.pageHeightPx
+  const padTop = geometry.marginTopPx
+  const padRight = geometry.marginRightPx
+  const padBottom = geometry.marginBottomPx
+  const padLeft = geometry.marginLeftPx
+  const contentWidth = geometry.usableWidthPx
+  const contentHeight = geometry.usableHeightPx
   const twoColumns = isTwoColumns(documentValue)
 
   const pageFontStyle = {
@@ -838,6 +839,14 @@ export function StructuredContentEditor({
     flow: "full",
     node: <EditableRichText value={documentValue.title} ariaLabel="Título do documento" className="mb-2 text-2xl font-bold text-teal-900" onChange={(value) => mutate((draft) => { draft.title = value }, false)} onFocus={focusMeta} onBlur={richBlur} />,
   })
+  if (documentValue.subtitle) {
+    blocks.push({
+      key: "block-subtitle",
+      breakBefore: false,
+      flow: "full",
+      node: <EditableRichText value={documentValue.subtitle} ariaLabel="Subtítulo do documento" className="mb-3 text-xs text-slate-500" onChange={(value) => mutate((draft) => { draft.subtitle = value }, false)} onFocus={focusMeta} onBlur={richBlur} />,
+    })
+  }
   if (documentValue.header.visible && headerFieldRows(documentValue.header.fields).length > 0) {
     blocks.push({
       key: "block-header",
@@ -874,12 +883,8 @@ export function StructuredContentEditor({
     })
   }
   let pendingBreak = false
-  const columnGapPx = documentValue.page.columnGap ?? 24
   const columnSeparator = documentValue.page.columnSeparator === "line"
-  const questionColumnWidth = twoColumns ? Math.max(120, Math.floor((contentWidth - columnGapPx) / 2)) : contentWidth
-  const columnStyle: React.CSSProperties | undefined = twoColumns
-    ? { columnCount: 2, columnGap: `${columnGapPx}px`, columnFill: "balance", ...(columnSeparator ? { columnRule: "1px solid #cbd5e1" } : {}) }
-    : undefined
+  const questionColumnWidth = twoColumns ? Math.max(120, Math.floor(geometry.columnWidthPx)) : contentWidth
 
   let fimAtividadeMarked = false
   let pedagogicalStarted = false
@@ -1011,7 +1016,16 @@ export function StructuredContentEditor({
     setZoom(Math.max(0.3, Math.min((element.clientWidth - 64) / pageWidthPx, (element.clientHeight - 64) / pageHeightPx)))
   }
 
-  const pageStyle = { width: pageWidthPx, background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,.2)", ...pageFontStyle } as const
+  const pageStyle = { width: pageWidthPx, background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,.2)", position: "relative" as const, ...pageFontStyle } as const
+  // Linha tracejada da ÁREA ÚTIL (margens visíveis) — apenas no editor, nunca na
+  // impressão. Corresponde exatamente às margens configuradas.
+  const marginGuide = (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0 z-10 print:hidden"
+      style={{ left: padLeft, right: padRight, top: padTop, bottom: padBottom, border: "1px dashed #b6c0c8" }}
+    />
+  )
 
   const renderPage = (page: FlowPage, pageIndex: number) => {
     const left = (page.columns[0] ?? []).map((item) => <div key={item.id}>{nodeByKey.get(item.id)}</div>)
@@ -1021,13 +1035,18 @@ export function StructuredContentEditor({
       <div key={pageIndex}>
         <div className="mb-1.5 mt-4 text-center text-[11px] font-semibold uppercase tracking-wider text-muted-foreground print:hidden">Página {pageIndex + 1}</div>
         <div className="editor-page" style={{ ...pageStyle, height: pageHeightPx, padding: `${padTop}px ${padRight}px ${padBottom}px ${padLeft}px`, overflow: "hidden" }}>
+          {marginGuide}
           {page.full.map((item) => <div key={item.id}>{nodeByKey.get(item.id)}</div>)}
           {hasColumns && (
-            <div className="mt-1" style={columnStyle}>
-              {left}
-              {right}
+            <div className="mt-1" style={{ display: "flex", alignItems: "stretch" }}>
+              <div className="min-w-0" style={{ width: geometry.columnWidthPx }}>{left}</div>
+              <div className="shrink-0" style={{ width: geometry.columnGapPx, position: "relative" }}>
+                {columnSeparator && <div style={{ position: "absolute", left: "50%", top: 0, bottom: 0, width: 1, background: "#cbd5e1" }} />}
+              </div>
+              <div className="min-w-0" style={{ width: geometry.columnWidthPx }}>{right}</div>
             </div>
           )}
+          {page.after.map((item) => <div key={item.id}>{nodeByKey.get(item.id)}</div>)}
         </div>
       </div>
     )
@@ -1037,6 +1056,7 @@ export function StructuredContentEditor({
     <div>
       <div className="mb-1.5 mt-4 text-center text-[11px] font-semibold uppercase tracking-wider text-muted-foreground print:hidden">Página 1</div>
       <div className="editor-page" style={{ ...pageStyle, minHeight: pageHeightPx, padding: `${padTop}px ${padRight}px ${padBottom}px ${padLeft}px` }}>
+        {marginGuide}
         {blocks.map((block) => <div key={block.key}>{block.node}</div>)}
       </div>
     </div>
@@ -1124,7 +1144,7 @@ export function StructuredContentEditor({
           <aside className="space-y-4 print:hidden">
             <div className="rounded-lg border bg-card p-4"><h3 className="font-semibold">+ Adicionar conteúdo</h3><div className="mt-3 grid grid-cols-2 gap-2">{[["heading", "Título", Heading1], ["paragraph", "Parágrafo", Plus], ["question", "Questão", Plus], ["instruction", "Instrução", Plus], ["list", "Lista", List], ["numberedList", "Numeração", ListOrdered], ["table", "Tabela", Table2], ["textBox", "Caixa de texto", Plus], ["responseSpace", "Espaço resposta", Plus], ["separator", "Separador", Minus], ["pageBreak", "Quebra página", Plus]].map(([type, label, Icon]) => <Button key={String(type)} type="button" size="sm" variant="outline" className="justify-start" onClick={() => addContent(String(type))}><Icon className="mr-1 h-3.5 w-3.5" />{String(label)}</Button>)}</div><Button type="button" className="mt-2 w-full" onClick={() => addContent("question")}><Plus className="mr-2 h-4 w-4" />Adicionar questão</Button></div>
             <div className="rounded-lg border bg-card p-4"><h3 className="font-semibold">Imagens</h3><p className="mt-1 text-xs text-muted-foreground">Inserir e organizar não consome IA.</p><select className="mt-3 h-10 w-full rounded-md border px-2 text-sm" value="" onChange={(event) => { if (event.target.value) addAsset(event.target.value) }}><option value="">Inserir imagem existente…</option>{assets.filter((asset) => asset.status === "READY").map((asset) => <option key={asset.id} value={asset.id}>{asset.altText || asset.prompt.slice(0, 45)}</option>)}</select><div className="mt-2"><AddImageDialog planId={planId} onAdded={(id) => void afterGeneratedImage(id)} /></div><Button type="button" size="sm" variant="outline" className="mt-2 w-full" onClick={() => newImageFileRef.current?.click()} disabled={uploadingNewImage}>{uploadingNewImage ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}Adicionar arquivo sem IA</Button><input ref={newImageFileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadNewImage(file) }} /></div>
-            <details className="rounded-lg border bg-card p-4" open><summary className="cursor-pointer font-semibold">Configurar página</summary><div className="mt-3 space-y-3"><div><Label>Tamanho</Label><select value={documentValue.page.size} onChange={(event) => mutate((draft) => { draft.page.size = event.target.value as "A4" | "LETTER" })} className="mt-1 h-10 w-full rounded-md border px-2"><option value="A4">A4</option><option value="LETTER">Carta</option></select></div><div><Label>Orientação</Label><select value={documentValue.page.orientation} onChange={(event) => mutate((draft) => { draft.page.orientation = event.target.value as "portrait" | "landscape" })} className="mt-1 h-10 w-full rounded-md border px-2"><option value="portrait">Retrato</option><option value="landscape">Paisagem</option></select></div><div><Label>Layout das questões</Label><select value={documentValue.page.columns === "two" ? "two" : "one"} onChange={(event) => mutate((draft) => { draft.page.columns = event.target.value === "two" ? "two" : "one" })} className="mt-1 h-10 w-full rounded-md border px-2"><option value="one">Uma coluna</option><option value="two">Duas colunas — Simulado</option></select></div>{documentValue.page.columns === "two" && <><div><Label>Espaçamento entre colunas (px)</Label><Input type="number" min={8} max={80} value={documentValue.page.columnGap ?? 24} onChange={(event) => mutate((draft) => { draft.page.columnGap = Number(event.target.value) })} /></div><div><Label>Separador entre colunas</Label><select className="mt-1 h-10 w-full rounded-md border px-2" value={documentValue.page.columnSeparator === "line" ? "line" : "none"} onChange={(event) => mutate((draft) => { draft.page.columnSeparator = event.target.value === "line" ? "line" : "none" })}><option value="none">Nenhum</option><option value="line">Linha discreta</option></select></div></>}<div><Label>Separar informações pedagógicas</Label><label className="mt-1 flex items-center gap-2 text-sm"><input type="checkbox" checked={documentValue.page.pedagogicalPageBreakBefore !== false} onChange={(event) => mutate((draft) => { draft.page.pedagogicalPageBreakBefore = event.target.checked })} />Iniciar em nova página</label></div><div className="grid grid-cols-2 gap-2">{(["marginTop", "marginRight", "marginBottom", "marginLeft"] as const).map((key) => <div key={key}><Label>{({ marginTop: "Margem sup.", marginRight: "Margem dir.", marginBottom: "Margem inf.", marginLeft: "Margem esq." })[key]}</Label><Input type="number" min={8} max={50} value={documentValue.page[key]} onChange={(event) => mutate((draft) => { draft.page[key] = Number(event.target.value) })} /></div>)}</div></div></details>
+            <details className="rounded-lg border bg-card p-4" open><summary className="cursor-pointer font-semibold">Configurar página</summary><div className="mt-3 space-y-3"><div><Label>Tamanho</Label><select value={documentValue.page.size} onChange={(event) => mutate((draft) => { draft.page.size = event.target.value as "A4" | "LETTER" })} className="mt-1 h-10 w-full rounded-md border px-2"><option value="A4">A4</option><option value="LETTER">Carta</option></select></div><div><Label>Orientação</Label><select value={documentValue.page.orientation} onChange={(event) => mutate((draft) => { draft.page.orientation = event.target.value as "portrait" | "landscape" })} className="mt-1 h-10 w-full rounded-md border px-2"><option value="portrait">Retrato</option><option value="landscape">Paisagem</option></select></div><div><Label>Layout das questões</Label><select value={documentValue.page.columns === "two" ? "two" : "one"} onChange={(event) => mutate((draft) => { draft.page.columns = event.target.value === "two" ? "two" : "one" })} className="mt-1 h-10 w-full rounded-md border px-2"><option value="one">Uma coluna</option><option value="two">Duas colunas — Simulado</option></select></div>{documentValue.page.columns === "two" && <><div><Label>Espaçamento entre colunas (mm)</Label><Input type="number" min={2} max={20} value={documentValue.page.columnGap ?? 8} onChange={(event) => mutate((draft) => { draft.page.columnGap = Number(event.target.value) })} /></div><div><Label>Separador entre colunas</Label><select className="mt-1 h-10 w-full rounded-md border px-2" value={documentValue.page.columnSeparator === "line" ? "line" : "none"} onChange={(event) => mutate((draft) => { draft.page.columnSeparator = event.target.value === "line" ? "line" : "none" })}><option value="none">Nenhum</option><option value="line">Linha discreta</option></select></div></>}<div><Label>Separar informações pedagógicas</Label><label className="mt-1 flex items-center gap-2 text-sm"><input type="checkbox" checked={documentValue.page.pedagogicalPageBreakBefore !== false} onChange={(event) => mutate((draft) => { draft.page.pedagogicalPageBreakBefore = event.target.checked })} />Iniciar em nova página</label></div><div className="grid grid-cols-2 gap-2">{(["marginTop", "marginRight", "marginBottom", "marginLeft"] as const).map((key) => <div key={key}><Label>{({ marginTop: "Margem sup.", marginRight: "Margem dir.", marginBottom: "Margem inf.", marginLeft: "Margem esq." })[key]}</Label><Input type="number" min={8} max={50} value={documentValue.page[key]} onChange={(event) => mutate((draft) => { draft.page[key] = Number(event.target.value) })} /></div>)}</div></div></details>
             <details className="rounded-lg border bg-card p-4" open><summary className="cursor-pointer font-semibold">Cabeçalho</summary><div className="mt-3 space-y-3">
               <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={documentValue.header.visible} onChange={(event) => mutate((draft) => { draft.header.visible = event.target.checked })} />Exibir cabeçalho</label>
               <div><Label>Espaçamento vertical</Label><select className="mt-1 h-10 w-full rounded-md border px-2" value={documentValue.header.layout || "normal"} onChange={(event) => mutate((draft) => { draft.header.layout = event.target.value as "compact" | "normal" | "spacious" })}><option value="compact">Compacto</option><option value="normal">Normal</option><option value="spacious">Espaçado</option></select></div>

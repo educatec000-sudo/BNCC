@@ -277,11 +277,43 @@ export function getPlanningContentTitle(content: PlanningContent): string {
  *
  * Também remove qualquer cabeçalho/formulário de identificação que a IA tenha
  * gerado dentro do conteúdo (Nome do Estudante, Turma, Data, Escola, Professor,
- * campos de preenchimento). Essas informações pertencem exclusivamente ao
- * cabeçalho da aplicação.
+ * campos de preenchimento) e qualquer título duplicado no início das instruções
+ * (o título já aparece no cabeçalho da aplicação).
  */
+function normalizeTitle(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/[^\p{L}\p{N} ]/gu, "")
+    .trim()
+}
+
+/** Remove linhas de TÍTULO apenas do INÍCIO do texto (antes de qualquer conteúdo). */
+function stripLeadingTitleLines(text: string, titles: string[]): string {
+  const normalizedTitles = titles.map(normalizeTitle).filter(Boolean)
+  if (normalizedTitles.length === 0) return text
+  const lines = text.split(/\r?\n/)
+  let start = 0
+  while (start < lines.length) {
+    const line = lines[start].trim()
+    if (!line) {
+      start += 1
+      continue
+    }
+    if (normalizedTitles.includes(normalizeTitle(line))) {
+      start += 1
+      continue
+    }
+    break
+  }
+  return lines.slice(start).join("\n").trimStart()
+}
+
 export function normalizePlanningContent(value: PlanningContent): PlanningContent {
   if (value.materialType === "activity" || value.materialType === "assessment") {
+    const titles = [value.metadata.titulo, value.titulo]
     const questoes = value.questoes.map((question) => ({
       ...question,
       enunciado: stripIdentificationLines(question.enunciado),
@@ -293,7 +325,7 @@ export function normalizePlanningContent(value: PlanningContent): PlanningConten
     }))
     return {
       ...value,
-      instrucoes: stripIdentificationLines(value.instrucoes),
+      instrucoes: stripLeadingTitleLines(stripIdentificationLines(value.instrucoes), titles),
       camposIdentificacao: [],
       questoes,
       gabarito,

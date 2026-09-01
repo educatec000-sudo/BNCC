@@ -141,6 +141,36 @@ select:focus-visible {
     margin: 0;
   }
 
+  /* Páginas nomeadas: o tamanho/orientação configurados no editor valem na
+     impressão (A4/Carta × retrato/paisagem), sempre com margem de folha = 0
+     porque as margens reais fazem parte do modelo de página (padding do bloco). */
+  @page landscape {
+    size: A4 landscape;
+    margin: 0;
+  }
+
+  @page letter {
+    size: Letter portrait;
+    margin: 0;
+  }
+
+  @page letter-landscape {
+    size: Letter landscape;
+    margin: 0;
+  }
+
+  .print-document[data-page-size="LETTER"][data-orientation="landscape"] {
+    page: letter-landscape;
+  }
+
+  .print-document[data-page-size="LETTER"][data-orientation="portrait"] {
+    page: letter;
+  }
+
+  .print-document[data-page-size="A4"][data-orientation="landscape"] {
+    page: landscape;
+  }
+
   nav:not(.document-navigation),
   aside:not(.document-aside),
   .app-header,
@@ -163,11 +193,9 @@ select:focus-visible {
   }
 
   .print-document {
-    width: 100% !important;
-    min-height: 0 !important;
     margin: 0 !important;
     box-shadow: none !important;
-    overflow: visible !important;
+    overflow: hidden !important;
     print-color-adjust: exact;
     -webkit-print-color-adjust: exact;
   }
@@ -215,4 +243,41 @@ select:focus-visible {
   .document-page-number::after {
     content: " " counter(page);
   }
+}
+
+/* Modo "Duas colunas — Simulado": fluxo vertical independente por coluna. */
+.document-question-columns {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.document-question-columns .document-question-cell {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.document-question-columns .document-question {
+  border-bottom: 1px solid #e2e8f0;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+}
+
+.document-question-columns .document-question:last-child {
+  border-bottom: 0;
+}
+
+/* Box-sizing explícito nas páginas, colunas e containers de layout (Editor =
+   Preview = Impressão = PDF usam a mesma área útil, sem margem duplicada). */
+.print-document,
+.editor-page,
+.document-question-columns,
+.document-question-cell,
+.document-content {
+  box-sizing: border-box;
+}
+
+.editor-page {
+  position: relative;
+  flex-shrink: 0;
+  margin: 0 auto;
 }

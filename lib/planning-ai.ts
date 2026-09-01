@@ -33,11 +33,28 @@ function invalidStructureError(errors: string[]): GeminiIntegrationError {
   })
 }
 
+// Tempo limite dedicado à GERAÇÃO DE PLANEJAMENTO (uma única chamada). 45s é o
+// padrão genérico do módulo Gemini e se mostrou curto para saída estruturada
+// grande (até 24k tokens + schema BNCC). 90s mantém folga dentro do limite da
+// rota (maxDuration = 300s), que ainda comporta a passada de correção e o
+// fallback de provedor. Configurável via PLANNING_GENERATION_TIMEOUT_MS.
+const DEFAULT_PLANNING_TIMEOUT_MS = 90_000
+const MIN_PLANNING_TIMEOUT_MS = 30_000
+const MAX_PLANNING_TIMEOUT_MS = 120_000
+
+function resolvePlanningTimeoutMs(): number {
+  const configured = Number(process.env.PLANNING_GENERATION_TIMEOUT_MS?.trim())
+  const value = Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_PLANNING_TIMEOUT_MS
+  return Math.min(Math.max(value, MIN_PLANNING_TIMEOUT_MS), MAX_PLANNING_TIMEOUT_MS)
+}
+
 async function generateAndCorrect(
   provider: TextAIProvider,
   prompt: string,
   schema: Record<string, unknown>,
   analysis: RequestAnalysis,
+  timeoutMs: number,
+  onModel?: (model: string) => void,
 ): Promise<{ content: PlanningContent; corrected: boolean }> {
   const generate = (currentPrompt: string) =>
     provider.generateStructured({
@@ -46,6 +63,8 @@ async function generateAndCorrect(
       validator: isPlanningContent,
       formatName: analysis.materialType,
       maxOutputTokens: (analysis.expectedCount || 0) > 20 ? 24_000 : 16_000,
+      timeoutMs,
+      onModel,
     })
 
   const first = await generate(prompt)
@@ -93,9 +112,36 @@ SCHEMA JSON OBRIGATÓRIO PARA A RESPOSTA:
 ${JSON.stringify(schema)}`
   const primary = getTextAIProvider()
   const fallback = getFallbackTextAIProvider(primary)
+  const timeoutMs = resolvePlanningTimeoutMs()
+
+  const run = async (
+    provider: TextAIProvider,
+  ): Promise<{ content: PlanningContent; corrected: boolean }> => {
+    let model = provider.id === "openai" ? "gpt-4o" : "desconhecido"
+    const startedAt = Date.now()
+    console.log(`[planning-ai] provider=${provider.id}`)
+    console.log(`[planning-ai] request started`)
+    try {
+      const generated = await generateAndCorrect(provider, prompt, schema, analysis, timeoutMs, (resolvedModel) => {
+        model = resolvedModel
+      })
+      console.log(`[planning-ai] model=${model}`)
+      console.log(`[planning-ai] request finished duration=${Date.now() - startedAt}ms`)
+      return generated
+    } catch (error) {
+      const normalized = toGeminiIntegrationError(error)
+      // O erro classificado carrega o modelo que estava sendo usado (ex.: em
+      // TIMEOUT, o modelo que estourou o limite), preferível ao "desconhecido".
+      const effectiveModel = normalized.model || model
+      console.log(`[planning-ai] model=${effectiveModel}`)
+      console.log(`[planning-ai] error=${normalized.code}`)
+      console.log(`[planning-ai] duration=${Date.now() - startedAt}ms`)
+      throw normalized
+    }
+  }
 
   try {
-    const generated = await generateAndCorrect(primary, prompt, schema, analysis)
+    const generated = await run(primary)
     return { ...generated, analysis, provider: primary.id }
   } catch (primaryError) {
     const normalizedError = toGeminiIntegrationError(primaryError)
@@ -106,10 +152,14 @@ ${JSON.stringify(schema)}`
     console.error(
       `[planning-ai] Provedor ${primary.id} falhou (${normalizedError.code}${upstreamInfo}${modelInfo}).`,
     )
-    if (!fallback) throw normalizedError
+    if (!fallback) {
+      console.log(`[planning-ai] fallback=none`)
+      throw normalizedError
+    }
 
+    console.log(`[planning-ai] fallback=${fallback.id}`)
     try {
-      const generated = await generateAndCorrect(fallback, prompt, schema, analysis)
+      const generated = await run(fallback)
       return {
         ...generated,
         analysis,

@@ -44,6 +44,11 @@ NEXTAUTH_URL=http://localhost:3000
 
 GEMINI_API_KEY=
 GEMINI_MODEL=gemini-flash-latest
+# Opcional: limite por chamada de geração de planejamento (ms). Padrão 90000 (90s).
+PLANNING_GENERATION_TIMEOUT_MS=90000
+# Opcional: provedor de texto de fallback (openai) é usado automaticamente se a
+# OPENAI_API_KEY estiver configurada e o Gemini falhar (ex.: TIMEOUT).
+OPENAI_API_KEY=
 
 PROFESSOR_MONTHLY_LIMIT=30
 PREMIUM_MONTHLY_LIMIT=100

@@ -101,7 +101,7 @@ REGRAS OBRIGATÓRIAS:
 - Cada prompt visual deve mencionar assunto, público, estilo, composição e acessibilidade. Não inclua texto pequeno dentro da imagem.
 - Se desenho para colorir estiver ativo, peça preto e branco, fundo branco, contornos definidos, sem sombras e poucos detalhes.
 - Não solicite nem inclua nome de estudante, CPF, endereço ou informação médica.
-- NÃO gere cabeçalho nem formulário de identificação (Nome do Estudante, Nome do Aluno, Turma, Data, Professor(a), Nome da Escola, Escola, campos com linhas para preenchimento). Essas informações pertencem exclusivamente ao cabeçalho da aplicação. O conteúdo gerado deve ser apenas pedagógico (título, instruções, questões, alternativas, gabarito, justificativas, habilidades).
+- NÃO gere cabeçalho, formulário de identificação (Nome do Estudante, Nome do Aluno, Turma, Data, Professor(a), Nome da Escola, Escola, campos com linhas para preenchimento) nem título repetido: o título já aparece no cabeçalho da aplicação, exatamente UMA vez. O conteúdo gerado deve ser apenas pedagógico (instruções, questões, alternativas, gabarito, justificativas, habilidades), começando direto pelas instruções/questões, sem título acima.
 - Retorne somente JSON válido aderente ao schema fornecido pela aplicação, sem markdown ou comentários.
 
 VALIDAÇÃO ANTES DE RESPONDER:
@@ -110,5 +110,6 @@ VALIDAÇÃO ANTES DE RESPONDER:
 3. Confirme a quantidade ${analysis.expectedCount ?? "definida no pedido"}.
 4. Para atividade ou avaliação, confira questões e gabarito um a um.
 5. Para sequência, confira o número de aulas.
-6. Para planejamento semanal, inclua exatamente segunda a sexta-feira.`
+6. Para planejamento semanal, inclua exatamente segunda a sexta-feira.
+7. Não repita o título nem inclua cabeçalho/formulário de identificação no conteúdo.`
 }

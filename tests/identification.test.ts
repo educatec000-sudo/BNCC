@@ -240,3 +240,62 @@ test("instruções pedagógicas permanecem após normalização", () => {
   if (normalized.materialType !== "activity") return
   assert.ok(normalized.instrucoes.includes("Em 15 de agosto de 2026, ocorreu um eclipse solar."))
 })
+
+// ---------------------------------------------------------------------------
+// 4) Título duplicado: o título vive UMA vez, no cabeçalho
+// ---------------------------------------------------------------------------
+
+test("atividade/avaliação não usam o título como título de seção (sem título duplicado)", () => {
+  for (const type of ["activity", "assessment"] as const) {
+    const content = baseContent(type)
+    if (content.materialType === "activity") {
+      // A IA devolve o MESMO título em metadata.titulo e em titulo (duplicação clássica).
+      content.titulo = content.metadata.titulo
+    }
+    const normalized = normalizePlanningContent(content)
+    const model = buildPlanningDocumentModel({
+      title: normalized.metadata.titulo,
+      topic: "Eletromagnetismo",
+      educationStage: "Ensino Médio",
+      subject: "Física",
+      grade: "3º Ano",
+      planningType: type === "activity" ? "Atividade" : "Avaliação",
+      request: "Atividade sobre eletromagnetismo.",
+      content: normalized,
+      images: [],
+    })
+
+    // A seção de conteúdo NÃO repete o título (que está no cabeçalho do documento).
+    const contentSection = model.sections.find((section) =>
+      section.blocks.some((block) => block.type === "questions"),
+    )
+    assert.ok(contentSection, `${type}: seção de questões ausente`)
+    assert.equal(contentSection.title, "", `${type}: título duplicado na seção de conteúdo`)
+    assert.equal(model.title, "Atividade de Física", `${type}: título do cabeçalho deve ser preservado`)
+    // Instruções preservadas dentro do conteúdo.
+    const paragraph = contentSection.blocks.find((block) => block.type === "paragraph")
+    assert.ok(paragraph && paragraph.type === "paragraph" && paragraph.text.includes("Responda com atenção."))
+  }
+})
+
+test("normalizePlanningContent remove título duplicado do início das instruções", () => {
+  const content = baseContent("activity")
+  if (content.materialType !== "activity") return
+  content.titulo = "Atividade de Física"
+  content.instrucoes = "Atividade de Física\n\nResponda com atenção.\nResolva as questões abaixo."
+  const normalized = normalizePlanningContent(content)
+  if (normalized.materialType !== "activity") return
+  assert.ok(!normalized.instrucoes.startsWith("Atividade de Física"))
+  assert.ok(normalized.instrucoes.includes("Responda com atenção."))
+  assert.ok(normalized.instrucoes.includes("Resolva as questões abaixo."))
+})
+
+test("normalizePlanningContent NÃO remove título legítimo no meio do texto", () => {
+  const content = baseContent("activity")
+  if (content.materialType !== "activity") return
+  content.titulo = "Atividade de Física"
+  content.instrucoes = "Leia com atenção.\nO título da atividade é Atividade de Física e ele orienta o estudo."
+  const normalized = normalizePlanningContent(content)
+  if (normalized.materialType !== "activity") return
+  assert.ok(normalized.instrucoes.includes("Atividade de Física"))
+})

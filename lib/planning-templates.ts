@@ -36,9 +36,9 @@ export const MATERIAL_INSTRUCTIONS: Record<MaterialType, string> = {
   pedagogical_project:
     "Produza exclusivamente um PROJETO PEDAGÓGICO completo, preferencialmente interdisciplinar: justificativa, problema, objetivos, público, áreas, metodologia, etapas, cronograma, recursos, avaliação e produto final.",
   activity:
-    "Produza exclusivamente uma ATIVIDADE pronta para o estudante: título, instruções, questões numeradas e gabarito. Não inclua metodologia, desenvolvimento ou plano de aula. NÃO inclua campos de identificação (nome do estudante, turma, data, escola, professor): isso pertence ao cabeçalho da aplicação e não ao conteúdo.",
+    "Produza exclusivamente uma ATIVIDADE pronta para o estudante: instruções, questões numeradas e gabarito. Não inclua metodologia, desenvolvimento ou plano de aula. NÃO inclua título, cabeçalho nem campos de identificação (nome do estudante, turma, data, escola, professor): o título e o cabeçalho já existem na aplicação e pertencem ao cabeçalho, não ao conteúdo.",
   assessment:
-    "Produza exclusivamente um INSTRUMENTO AVALIATIVO (prova, avaliação diagnóstica, formativa, somativa, rubrica ou checklist conforme o pedido), com questões/itens, critérios e gabarito. Não produza plano de aula.",
+    "Produza exclusivamente um INSTRUMENTO AVALIATIVO (prova, avaliação diagnóstica, formativa, somativa, rubrica ou checklist conforme o pedido), com questões/itens, critérios e gabarito. Não produza plano de aula. NÃO inclua título, cabeçalho nem campos de identificação: o título e o cabeçalho já existem na aplicação.",
   teaching_plan:
     "Produza exclusivamente um PLANO DE ENSINO de longo prazo, organizado por período letivo e unidades, com ementa, objetivos, conteúdos, metodologia, recursos e avaliação.",
   other:

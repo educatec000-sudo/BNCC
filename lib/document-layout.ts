@@ -1,8 +1,84 @@
-import type { EditorDocument, EditorElement } from "@/lib/editor-document"
+import {
+  headerFieldMetrics,
+  headerFieldRows,
+  plainTextFromHtml,
+  type EditorDocument,
+  type EditorElement,
+} from "@/lib/editor-document"
 
 /** O documento usa duas colunas (modo simulado)? */
 export function isTwoColumns(document: EditorDocument): boolean {
   return document.page.columns === "two"
+}
+
+/**
+ * Geometria REAL da página A4/Carta — a FONTE ÚNICA DE VERDADE de medidas para
+ * o Editor, Preview, Impressão e PDF. As margens fazem parte do modelo de página
+ * e são descontadas ANTES de calcular a área útil e a largura das colunas:
+ *
+ *   usable = página − margem esquerda − margem direita
+ *   coluna = (usable − espaçamento entre colunas) / 2
+ */
+export interface PageGeometry {
+  pageWidthMm: number
+  pageHeightMm: number
+  pageWidthPx: number
+  pageHeightPx: number
+  marginTopMm: number
+  marginRightMm: number
+  marginBottomMm: number
+  marginLeftMm: number
+  marginTopPx: number
+  marginRightPx: number
+  marginBottomPx: number
+  marginLeftPx: number
+  /** Área útil (px): página menos as margens. */
+  usableWidthPx: number
+  usableHeightPx: number
+  columnGapMm: number
+  columnGapPx: number
+  /** Largura de cada coluna no modo duas colunas (ou a área útil em uma coluna). */
+  columnWidthPx: number
+}
+
+export function pageGeometry(document: EditorDocument): PageGeometry {
+  const { width: pageWidthMm, height: pageHeightMm } = pageDimensionsMm(document)
+  const pageWidthPx = mmToPx(pageWidthMm)
+  const pageHeightPx = mmToPx(pageHeightMm)
+  const marginTopMm = document.page.marginTop
+  const marginRightMm = document.page.marginRight
+  const marginBottomMm = document.page.marginBottom
+  const marginLeftMm = document.page.marginLeft
+  const marginTopPx = mmToPx(marginTopMm)
+  const marginRightPx = mmToPx(marginRightMm)
+  const marginBottomPx = mmToPx(marginBottomMm)
+  const marginLeftPx = mmToPx(marginLeftMm)
+  const usableWidthPx = Math.max(1, pageWidthPx - marginLeftPx - marginRightPx)
+  const usableHeightPx = Math.max(1, pageHeightPx - marginTopPx - marginBottomPx)
+  const columnGapMm = document.page.columnGap ?? 8
+  const columnGapPx = mmToPx(columnGapMm)
+  const columnWidthPx = isTwoColumns(document)
+    ? Math.max(1, (usableWidthPx - columnGapPx) / 2)
+    : usableWidthPx
+  return {
+    pageWidthMm,
+    pageHeightMm,
+    pageWidthPx,
+    pageHeightPx,
+    marginTopMm,
+    marginRightMm,
+    marginBottomMm,
+    marginLeftMm,
+    marginTopPx,
+    marginRightPx,
+    marginBottomPx,
+    marginLeftPx,
+    usableWidthPx,
+    usableHeightPx,
+    columnGapMm,
+    columnGapPx,
+    columnWidthPx,
+  }
 }
 
 /** Largura/altura de página em milímetros (A4 ou Carta). */
@@ -150,10 +226,12 @@ export interface FlowBlock {
   breakBefore?: boolean
 }
 
-/** Página montada: blocos de largura total no topo e até 2 colunas de questões. */
+/** Página montada: blocos de largura total no topo, até 2 colunas de questões e
+ *  blocos de largura total que CONTINUAM abaixo das colunas na mesma página. */
 export interface FlowPage {
   full: FlowBlock[]
   columns: FlowBlock[][]
+  after: FlowBlock[]
 }
 
 /**
@@ -162,15 +240,19 @@ export interface FlowPage {
  * normalmente; trechos de questões consecutivas entram nas duas colunas com
  * fluxo vertical independente, começando logo abaixo do último bloco de largura
  * total (na mesma página, se houver espaço) e continuando nas páginas seguintes.
+ * Blocos de largura total que vêm DEPOIS das colunas (ex.: tabela de habilidades
+ * BNCC, gabarito) continuam na MESMA página, abaixo das colunas, se couberem —
+ * a quebra só acontece quando o conteúdo atinge o fim da área útil.
  */
 export function layoutFlow(blocks: FlowBlock[], pageHeight: number): FlowPage[] {
   const pages: FlowPage[] = []
-  let current: FlowPage = { full: [], columns: [] }
+  let current: FlowPage = { full: [], columns: [], after: [] }
   let currentUsed = 0
 
-  const newPage = (): FlowPage => ({ full: [], columns: [] })
+  const newPage = (): FlowPage => ({ full: [], columns: [], after: [] })
+  const isEmpty = (page: FlowPage) => page.full.length === 0 && page.columns.length === 0 && page.after.length === 0
   const pushCurrent = () => {
-    if (current.full.length > 0 || current.columns.length > 0) pages.push(current)
+    if (!isEmpty(current)) pages.push(current)
     current = newPage()
     currentUsed = 0
   }
@@ -180,11 +262,22 @@ export function layoutFlow(blocks: FlowBlock[], pageHeight: number): FlowPage[] 
     const block = blocks[index]
     if (block.kind === "full") {
       const height = Math.min(block.height, pageHeight)
-      if (current.columns.length > 0) pushCurrent()
-      if (block.breakBefore && (current.full.length > 0 || currentUsed > 0)) pushCurrent()
-      if (current.full.length > 0 && currentUsed + height > pageHeight + 1e-6) pushCurrent()
-      current.full.push(block)
-      currentUsed += height
+      if (block.breakBefore && !isEmpty(current)) pushCurrent()
+      if (current.columns.length > 0) {
+        // Continua ABAIXO das colunas na mesma página, se couber.
+        if (currentUsed + height <= pageHeight + 1e-6) {
+          current.after.push(block)
+          currentUsed += height
+        } else {
+          pushCurrent()
+          current.full.push(block)
+          currentUsed += height
+        }
+      } else {
+        if (current.full.length > 0 && currentUsed + height > pageHeight + 1e-6) pushCurrent()
+        current.full.push(block)
+        currentUsed += height
+      }
       index++
       continue
     }
@@ -197,11 +290,15 @@ export function layoutFlow(blocks: FlowBlock[], pageHeight: number): FlowPage[] 
     }
     if (run.length === 0) continue
 
+    // Se a página atual já tem uma região de colunas, novas questões começam em
+    // nova página (uma única região de colunas por página).
+    if (current.columns.length > 0) pushCurrent()
+
     let firstColumnHeight = pageHeight - currentUsed
     // Se a primeira questão não cabe na coluna restante da página atual (ex.: logo
     // após instruções), ela e o trecho inteiro vão para a página seguinte.
     const firstQuestionFits = Math.min(run[0].height, pageHeight) <= firstColumnHeight + 1e-6
-    if (current.full.length > 0 && (!firstQuestionFits || firstColumnHeight < 1)) {
+    if ((current.full.length > 0 || current.after.length > 0) && (!firstQuestionFits || firstColumnHeight < 1)) {
       pushCurrent()
       firstColumnHeight = pageHeight
     }
@@ -213,29 +310,50 @@ export function layoutFlow(blocks: FlowBlock[], pageHeight: number): FlowPage[] 
       pageHeight,
       Math.max(1, firstColumnHeight),
     )
+    const columnsHeight = (columns: ColumnItem[][]) =>
+      Math.max(
+        columns[0]?.reduce((sum, item) => sum + item.height, 0) ?? 0,
+        columns[1]?.reduce((sum, item) => sum + item.height, 0) ?? 0,
+      )
     current.columns = toFlow(columnPages[0])
-    pushCurrent()
-    for (let page = 1; page < columnPages.length; page++) {
-      pages.push({ full: [], columns: toFlow(columnPages[page]) })
+    currentUsed += columnsHeight(columnPages[0])
+
+    if (columnPages.length > 1) {
+      // Fecha a página atual (cabeçalho + primeira leva de colunas) ANTES das
+      // páginas de continuação, preservando a ordem de leitura.
+      pushCurrent()
+      // Páginas intermediárias (fechadas).
+      for (let page = 1; page < columnPages.length - 1; page++) {
+        pages.push({ full: [], columns: toFlow(columnPages[page]), after: [] })
+      }
+      // A ÚLTIMA página de colunas fica ABERTA: blocos de largura total
+      // posteriores (tabela BNCC, gabarito) entram em `after`, abaixo das colunas.
+      const last = columnPages[columnPages.length - 1]
+      current = { full: [], columns: toFlow(last), after: [] }
+      currentUsed = columnsHeight(last)
     }
+    // Se coube tudo em uma página, `current` permanece aberta para `after`.
   }
   pushCurrent()
   return pages
 }
 
-/** Estimativa de altura (px) de uma questão para o PDF (que não mede o DOM). */
-export function estimateQuestionHeight(element: EditorElement): number {
+/**
+ * Estimativa de altura (px) de uma questão para o PDF/Impressão (que não medem o
+ * DOM). `linePx` é a altura de uma linha no documento (fonte × entrelinha), e
+ * `charsPerLine` o número de caracteres por linha na largura da coluna.
+ */
+export function estimateQuestionHeight(element: EditorElement, charsPerLine = 42, linePx = 17): number {
   if (element.type !== "question") return 60
   const text = element.content.replace(/<[^>]+>/g, "").trim()
-  const charsPerLine = 42
   const textLines = Math.max(1, Math.ceil(text.length / charsPerLine))
   const alternativeLines = element.alternatives.reduce((total, alternative) => {
     const length = alternative.content.replace(/<[^>]+>/g, "").trim().length
-    return total + Math.max(1, Math.ceil(length / (charsPerLine - 3)))
+    return total + Math.max(1, Math.ceil(length / Math.max(12, charsPerLine - 3)))
   }, 0)
   const imageHeight = element.images.reduce((total, image) => total + 150 * (image.widthPercent / 100), 0)
-  const responseLines = element.responseLines * 18
-  return textLines * 17 + alternativeLines * 17 + imageHeight + responseLines + 34
+  const responseLines = element.responseLines * linePx * 1.2
+  return textLines * linePx + alternativeLines * linePx + imageHeight + responseLines + 34
 }
 
 /** Estimativa de altura (px) de qualquer elemento para o PDF. */
@@ -271,4 +389,144 @@ export function estimateElementHeight(element: EditorElement, document: EditorDo
     case "pageBreak":
       return 0
   }
+}
+
+/** Altura estimada (px) do bloco de cabeçalho visível (título + campos). */
+function headerBlockHeightPx(document: EditorDocument): number {
+  const fields = document.header.fields.filter((field) => field.visible)
+  if (fields.length === 0) return 0
+  const rows = headerFieldRows(fields)
+  const total = rows.reduce((sum, row) => {
+    const metrics = headerFieldMetrics(row[0], document.header.layout || "normal")
+    return sum + metrics.minHeight + metrics.spacingAfter
+  }, 0)
+  // minHeight/spacingAfter estão em pt; converte para px (1pt = 4/3 px).
+  return Math.round(total * (4 / 3)) + 18
+}
+
+/** Altura estimada (px) do gabarito derivado. */
+function gabaritoBlockHeightPx(questions: QuestionElement[]): number {
+  if (questions.length === 0) return 0
+  const body = questions.reduce((sum, question) => {
+    const justification = plainTextFromHtml(question.justification || "").trim()
+    const lines = Math.max(1, Math.ceil(justification.length / 70))
+    return sum + 18 + lines * 14
+  }, 0)
+  return body + 26
+}
+
+/** Bloco do fluxo com altura estimada (px) — a entrada comum de paginação. */
+export interface FlowBlockSpec {
+  kind: "full" | "question"
+  id: string
+  height: number
+  breakBefore: boolean
+}
+
+/**
+ * Constrói o fluxo paginável do documento (título → cabeçalho → seções →
+ * gabarito) com alturas ESTIMADAS em px. É a FONTE ÚNICA DE VERDADE usada por
+ * Preview, Impressão e PDF (o Editor usa o mesmo layoutFlow, mas com alturas
+ * medidas no DOM). Aplica:
+ *  - questão em uma coluna quando a seção é pedagógica;
+ *  - ÚNICA quebra obrigatória antes da PRIMEIRA seção pedagógica;
+ *  - gabarito derivado no mesmo fluxo pedagógico.
+ */
+export function buildFlowSpec(document: EditorDocument, geometry: PageGeometry = pageGeometry(document)): FlowBlockSpec[] {
+  const twoColumns = isTwoColumns(document)
+  const fontSize = document.page.defaultFontSize || 11
+  const lineHeight = document.page.lineHeight || 1.5
+  // Altura real de uma linha (px): fonte em pt → px (96 dpi) × entrelinha.
+  const linePx = fontSize * (96 / 72) * lineHeight
+  // Largura média de um caractere (~0,5em) na fonte do documento.
+  const charPx = fontSize * 0.5 * (96 / 72)
+  const columnContentWidth = twoColumns ? geometry.columnWidthPx : geometry.usableWidthPx
+  const charsPerLine = Math.max(20, Math.floor(columnContentWidth / charPx))
+  // Margem de segurança: as alturas estimadas são levemente infladas para que a
+  // paginação nunca estoure a área útil (nunca corta questão nem desloca o fluxo).
+  const SAFETY_FULL = 1.15
+  const SAFETY_QUESTION = 1.12
+  const cap = geometry.usableHeightPx
+  const fullHeight = (height: number) => Math.min(cap, Math.round(height * SAFETY_FULL))
+  const questionHeight = (question: EditorElement) =>
+    Math.min(cap, Math.round(estimateQuestionHeight(question, charsPerLine, linePx) * SAFETY_QUESTION))
+  const blocks: FlowBlockSpec[] = []
+
+  blocks.push({ kind: "full", id: "__title__", height: fullHeight(40), breakBefore: false })
+  if (document.subtitle) blocks.push({ kind: "full", id: "__subtitle__", height: fullHeight(30), breakBefore: false })
+  const headerHeight = headerBlockHeightPx(document)
+  if (headerHeight > 0) blocks.push({ kind: "full", id: "__header__", height: fullHeight(headerHeight), breakBefore: false })
+
+  const pedagogicalBreakEnabled = document.page.pedagogicalPageBreakBefore !== false
+  let pendingBreak = false
+  let pedagogicalStarted = false
+
+  for (const section of document.sections) {
+    const isPedagogical = section.kind === "pedagogical"
+    const isFirstPedagogical = isPedagogical && !pedagogicalStarted
+    if (isPedagogical) pedagogicalStarted = true
+    const forceBreak = isFirstPedagogical && pedagogicalBreakEnabled
+    const titleVisible = plainTextFromHtml(section.title).trim().length > 0
+    const sectionBreak: boolean = section.pageBreakBefore === true || pendingBreak || forceBreak
+    if (titleVisible) {
+      blocks.push({ kind: "full", id: `section-title-${section.id}`, height: fullHeight(32), breakBefore: sectionBreak })
+      pendingBreak = false
+    } else {
+      pendingBreak = sectionBreak
+    }
+    for (const group of groupSectionElements(section.elements)) {
+      if (group.kind === "full") {
+        if (group.element.type === "pageBreak") {
+          pendingBreak = true
+          continue
+        }
+        blocks.push({
+          kind: "full",
+          id: group.element.id,
+          height: fullHeight(estimateElementHeight(group.element, document)),
+          breakBefore: pendingBreak,
+        })
+        pendingBreak = false
+      } else if (twoColumns && !isPedagogical) {
+        for (const question of group.questions) {
+          blocks.push({
+            kind: "question",
+            id: question.id,
+            height: questionHeight(question),
+            breakBefore: pendingBreak,
+          })
+          pendingBreak = false
+        }
+      } else {
+        for (const question of group.questions) {
+          blocks.push({
+            kind: "full",
+            id: question.id,
+            height: fullHeight(estimateQuestionHeight(question, charsPerLine, linePx)),
+            breakBefore: pendingBreak,
+          })
+          pendingBreak = false
+        }
+      }
+    }
+  }
+
+  const gabarito = document.sections.flatMap((section) =>
+    section.elements.filter(
+      (element): element is QuestionElement =>
+        element.type === "question" && Boolean(element.answer || element.justification),
+    ),
+  )
+  if (gabarito.length > 0) {
+    const isFirstPedagogical = !pedagogicalStarted
+    const forceBreak = isFirstPedagogical && pedagogicalBreakEnabled
+    blocks.push({
+      kind: "full",
+      id: "__gabarito__",
+      height: fullHeight(gabaritoBlockHeightPx(gabarito)),
+      breakBefore: pendingBreak || forceBreak,
+    })
+  }
+
+  return blocks
 }

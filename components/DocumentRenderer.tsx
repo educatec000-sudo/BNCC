@@ -1,4 +1,5 @@
 /* eslint-disable @next/next/no-img-element */
+import { Fragment } from "react"
 import {
   headerFieldMetrics,
   headerFieldRows,
@@ -10,7 +11,7 @@ import {
   type EditorImageReference,
   type EditorTextStyle,
 } from "@/lib/editor-document"
-import { groupSectionElements, isTwoColumns } from "@/lib/document-layout"
+import { buildFlowSpec, layoutFlow, pageGeometry } from "@/lib/document-layout"
 import { cn } from "@/lib/utils"
 
 function rich(html: string) {
@@ -152,136 +153,146 @@ export function DocumentRenderer({
     document.footer.showMaterialName ? document.title.replace(/<[^>]+>/g, "") : "",
     document.footer.customText,
   ].filter(Boolean)
-  const landscape = document.page.orientation === "landscape"
   const headerLayout = document.header.layout || "normal"
+  const geometry = pageGeometry(document)
 
-  // Gabarito derivado das próprias questões (fonte única de verdade).
+  // Paginação EXPLÍCITA por página (mesmo algoritmo do PDF: buildFlowSpec +
+  // layoutFlow). Cada página tem largura/altura/margens fixas, de modo que as
+  // margens valem em TODAS as páginas (inclusive topo/rodapé das páginas 2+).
+  const footerReserve = document.footer.visible ? 26 : 0
+  const flowHeight = Math.max(1, geometry.usableHeightPx - footerReserve)
+  const spec = buildFlowSpec(document, geometry)
+  const pages = layoutFlow(
+    spec.map((block) => ({ kind: block.kind, id: block.id, height: block.height, breakBefore: block.breakBefore })),
+    flowHeight,
+  )
+
+  // Nós por id (fonte única de renderização de conteúdo).
+  const nodeById = new Map<string, React.ReactNode>()
+  nodeById.set("__title__", <h1 className="text-2xl font-bold text-teal-900" dangerouslySetInnerHTML={rich(document.title)} />)
+  if (document.subtitle) nodeById.set("__subtitle__", <p className="mt-1 text-xs text-slate-500">{document.subtitle}</p>)
+  if (document.header.visible && headerFieldRows(document.header.fields).length > 0) {
+    nodeById.set(
+      "__header__",
+      <div className="mt-3 border-t border-slate-400 pt-3">
+        {headerFieldRows(document.header.fields).map((row, rowIndex) => (
+          <div key={rowIndex} className="flex items-stretch gap-x-5">
+            {row.map((field) => {
+              const metrics = headerFieldMetrics(field, headerLayout)
+              const width = headerFieldWidth(field, row.length)
+              return (
+                <div key={field.id} className="min-w-0" style={{ width: `${width}%`, textAlign: field.alignment || "left" }}>
+                  <div
+                    className="border-b border-slate-400"
+                    style={{ minHeight: `${metrics.minHeight}pt`, marginBottom: `${metrics.spacingAfter}pt`, lineHeight: metrics.lineHeight }}
+                  >
+                    <span className="font-bold uppercase tracking-wide text-slate-500" style={{ fontSize: `${Math.max(6.5, metrics.fontSize - 1)}pt` }}>
+                      {field.label}:
+                    </span>{" "}
+                    <span style={{ fontSize: `${metrics.fontSize}pt` }}>{field.value}</span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        ))}
+      </div>,
+    )
+  }
+  for (const section of document.sections) {
+    if (section.title.replace(/<[^>]+>/g, "").trim()) {
+      nodeById.set(
+        `section-title-${section.id}`,
+        <h2 className="mb-3 border-b border-teal-200 pb-1 text-lg font-bold text-teal-800" dangerouslySetInnerHTML={rich(section.title)} />,
+      )
+    }
+    for (const element of section.elements) {
+      if (element.type === "pageBreak") continue
+      nodeById.set(element.id, <Element element={element} document={document} assets={assetMap} />)
+    }
+  }
+  // Gabarito derivado das questões (fonte única de verdade).
   const gabaritoQuestions = document.sections.flatMap((section) =>
     section.elements.filter(
       (element): element is Extract<EditorElement, { type: "question" }> =>
         element.type === "question" && Boolean(element.answer || element.justification),
     ),
   )
-  const gabaritoSection = gabaritoQuestions.length > 0
-    ? {
-        id: "__gabarito__",
-        title: "Gabarito",
-        pageBreakBefore: false,
-        kind: "pedagogical" as const,
-        elements: [
-          {
-            id: "__gabarito-table__",
-            type: "table" as const,
-            headers: ["Questão", "Resposta", "Justificativa"],
-            rows: gabaritoQuestions.map((question) => [
-              String(question.number),
-              question.answer || "",
-              plainTextFromHtml(question.justification || ""),
-            ]),
-          },
-        ],
-      }
-    : null
-  const renderSections = gabaritoSection ? [...document.sections, gabaritoSection] : document.sections
-  // ÚNICA quebra obrigatória: antes da PRIMEIRA seção pedagógica. Depois dela o
-  // conteúdo flui naturalmente (Habilidades → Inclusão → Gabarito → Justificativas).
-  const pedagogicalBreakEnabled = document.page.pedagogicalPageBreakBefore !== false
-  const firstPedagogicalIndex = renderSections.findIndex((section) => section.kind === "pedagogical")
+  if (gabaritoQuestions.length > 0) {
+    nodeById.set(
+      "__gabarito__",
+      <Fragment>
+        <h2 className="mb-3 border-b border-teal-200 pb-1 text-lg font-bold text-teal-800">Gabarito</h2>
+        <div className="mb-4 overflow-hidden break-inside-avoid border border-slate-400">
+          <table className="w-full border-collapse text-sm">
+            <thead><tr className="bg-teal-50"><th className="border-b border-r border-slate-300 p-2 text-left">Questão</th><th className="border-b border-r border-slate-300 p-2 text-left">Resposta</th><th className="border-b border-slate-300 p-2 text-left">Justificativa</th></tr></thead>
+            <tbody>
+              {gabaritoQuestions.map((question) => (
+                <tr key={question.id}>
+                  <td className="border-b border-r border-slate-300 p-2 align-top">{question.number}</td>
+                  <td className="border-b border-r border-slate-300 p-2 align-top">{question.answer || ""}</td>
+                  <td className="border-b border-slate-300 p-2 align-top">{plainTextFromHtml(question.justification || "")}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Fragment>,
+    )
+  }
+
+  const columnSeparator = document.page.columnSeparator === "line"
+  const pageStyle: React.CSSProperties = {
+    boxSizing: "border-box",
+    width: `${geometry.pageWidthMm}mm`,
+    height: `${geometry.pageHeightMm}mm`,
+    overflow: "hidden",
+    padding: `${geometry.marginTopMm}mm ${geometry.marginRightMm}mm ${geometry.marginBottomMm}mm ${geometry.marginLeftMm}mm`,
+    fontFamily: document.page.defaultFontFamily,
+    fontSize: `${document.page.defaultFontSize}pt`,
+    lineHeight: document.page.lineHeight,
+  }
 
   return (
-    <article
-      className={cn("print-document relative mx-auto bg-white text-slate-900 shadow-sm", className)}
-      data-page-size={document.page.size}
-      data-orientation={document.page.orientation}
-      style={{
-        boxSizing: "border-box",
-        width: landscape ? "297mm" : document.page.size === "LETTER" ? "216mm" : "210mm",
-        minHeight: landscape ? "210mm" : document.page.size === "LETTER" ? "279mm" : "297mm",
-        paddingTop: `${document.page.marginTop}mm`,
-        paddingRight: `${document.page.marginRight}mm`,
-        paddingBottom: `${document.page.marginBottom}mm`,
-        paddingLeft: `${document.page.marginLeft}mm`,
-        fontFamily: document.page.defaultFontFamily,
-        fontSize: `${document.page.defaultFontSize}pt`,
-        lineHeight: document.page.lineHeight,
-      }}
-    >
-      <header className="document-header mb-5 block border-b border-slate-400 pb-4">
-        <h1 className="text-2xl font-bold text-teal-900" dangerouslySetInnerHTML={rich(document.title)} />
-        {document.subtitle && <p className="mt-1 text-xs text-slate-500">{document.subtitle}</p>}
-        {document.header.visible && headerFieldRows(document.header.fields).length > 0 && (
-          <div className="mt-4">
-            {headerFieldRows(document.header.fields).map((row, rowIndex) => (
-              <div key={rowIndex} className="flex items-stretch gap-x-5">
-                {row.map((field) => {
-                  const metrics = headerFieldMetrics(field, headerLayout)
-                  const width = headerFieldWidth(field, row.length)
-                  return (
-                    <div key={field.id} className="min-w-0" style={{ width: `${width}%`, textAlign: field.alignment || "left" }}>
-                      <div
-                        className="border-b border-slate-400"
-                        style={{ minHeight: `${metrics.minHeight}pt`, marginBottom: `${metrics.spacingAfter}pt`, lineHeight: metrics.lineHeight }}
-                      >
-                        <span className="font-bold uppercase tracking-wide text-slate-500" style={{ fontSize: `${Math.max(6.5, metrics.fontSize - 1)}pt` }}>
-                          {field.label}:
-                        </span>{" "}
-                        <span style={{ fontSize: `${metrics.fontSize}pt` }}>{field.value}</span>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            ))}
-          </div>
-        )}
-      </header>
-
-      <main className="document-content block p-0">
-        {renderSections.map((section, sectionIndex) => {
-          // Seções pedagógicas (BNCC/inclusão/gabarito) nunca usam duas colunas.
-          const pedagogical = section.kind === "pedagogical"
-          const breakBefore = section.pageBreakBefore === true ||
-            (pedagogical && sectionIndex === firstPedagogicalIndex && pedagogicalBreakEnabled)
-          return (
-            <section key={section.id} className={cn("mb-5", breakBefore && "break-before-page")}>
-              {section.title.replace(/<[^>]+>/g, "").trim() && (
-                <h2 className="mb-3 border-b border-teal-200 pb-1 text-lg font-bold text-teal-800" dangerouslySetInnerHTML={rich(section.title)} />
-              )}
-              {groupSectionElements(section.elements).map((group, groupIndex) =>
-                group.kind === "full" ? (
-                  <Element key={group.element.id} element={group.element} document={document} assets={assetMap} />
-                ) : isTwoColumns(document) && !pedagogical ? (
-                  <div
-                    key={`questions-${groupIndex}`}
-                    className="document-question-columns"
-                    style={{
-                      columnCount: 2,
-                      columnGap: `${document.page.columnGap ?? 24}px`,
-                      columnFill: "balance",
-                      ...(document.page.columnSeparator === "line" ? { columnRule: "1px solid #cbd5e1" } : {}),
-                    }}
-                  >
-                    {group.questions.map((question) => (
-                      <div key={question.id} className="document-question-cell" style={{ breakInside: "avoid", pageBreakInside: "avoid" }}>
-                        <Element element={question} document={document} assets={assetMap} />
-                      </div>
-                    ))}
+    <div className={cn("print-document-pages", className)}>
+      {pages.map((page, pageIndex) => {
+        const left = page.columns[0] ?? []
+        const right = page.columns[1] ?? []
+        return (
+          <article
+            key={pageIndex}
+            className="print-document relative mx-auto mb-6 bg-white text-slate-900 shadow-sm"
+            data-page-size={document.page.size}
+            data-orientation={document.page.orientation}
+            style={{ ...pageStyle, pageBreakAfter: pageIndex < pages.length - 1 ? "always" : undefined }}
+          >
+            <main className="document-content block">
+              {page.full.map((item) => <Fragment key={item.id}>{nodeById.get(item.id)}</Fragment>)}
+              {left.length > 0 || right.length > 0 ? (
+                <div className="document-question-columns mt-1" style={{ display: "flex", alignItems: "stretch" }}>
+                  <div className="document-question-column min-w-0" style={{ width: geometry.columnWidthPx }}>
+                    {left.map((item) => <div key={item.id} className="document-question-cell">{nodeById.get(item.id)}</div>)}
                   </div>
-                ) : (
-                  group.questions.map((question) => <Element key={question.id} element={question} document={document} assets={assetMap} />)
-                ),
-              )}
-            </section>
-          )
-        })}
-      </main>
+                  <div className="document-question-gap shrink-0" style={{ width: geometry.columnGapPx, position: "relative" }}>
+                    {columnSeparator && <div className="document-column-separator" style={{ position: "absolute", left: "50%", top: 0, bottom: 0, width: 1, background: "#cbd5e1" }} />}
+                  </div>
+                  <div className="document-question-column min-w-0" style={{ width: geometry.columnWidthPx }}>
+                    {right.map((item) => <div key={item.id} className="document-question-cell">{nodeById.get(item.id)}</div>)}
+                  </div>
+                </div>
+              ) : null}
+              {page.after.map((item) => <Fragment key={item.id}>{nodeById.get(item.id)}</Fragment>)}
+            </main>
 
-      {document.footer.visible && (
-        <footer className="document-footer mt-8 flex border-t border-slate-300 pt-2 text-[10px] text-slate-500">
-          <span>{footerParts.join(" · ") || "+ Educação · BNCC Planner"}</span>
-          {document.footer.showPageNumber && <span className="document-page-number ml-auto">Página</span>}
-        </footer>
-      )}
-    </article>
+            {document.footer.visible && (
+              <footer className="document-footer mt-6 flex border-t border-slate-300 pt-2 text-[10px] text-slate-500">
+                <span>{footerParts.join(" · ") || "+ Educação · BNCC Planner"}</span>
+                {document.footer.showPageNumber && <span className="ml-auto">Página {pageIndex + 1}</span>}
+              </footer>
+            )}
+          </article>
+        )
+      })}
+    </div>
   )
 }

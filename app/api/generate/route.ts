@@ -175,6 +175,18 @@ export async function POST(req: NextRequest) {
 
   const inclusionLabel = INCLUSION_MODES.find((item) => item.id === inclusionMode)?.label || "Turma regular"
 
+  // Códigos em que repetir a requisição é seguro e faz sentido para o usuário.
+  const retryableCodes = new Set([
+    "TIMEOUT",
+    "RATE_LIMITED",
+    "QUOTA_EXCEEDED",
+    "GEMINI_SERVICE_UNAVAILABLE",
+    "GEMINI_INTERNAL_ERROR",
+    "UPSTREAM_ERROR",
+    "NETWORK_ERROR",
+  ])
+
+  const generationStartedAt = Date.now()
   let generated
   try {
     generated = await generatePlanningContent({
@@ -199,11 +211,22 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     await safelyRelease(reservation)
     const geminiError = toGeminiIntegrationError(error)
+    console.error(
+      `[api/generate] Geração falhou após ${Date.now() - generationStartedAt}ms: code=${geminiError.code} http=${geminiError.httpStatus}.`,
+    )
     return NextResponse.json(
-      { error: geminiError.message, code: geminiError.code },
+      {
+        error: geminiError.message,
+        code: geminiError.code,
+        retryable: retryableCodes.has(geminiError.code),
+      },
       { status: geminiError.httpStatus },
     )
   }
+
+  console.log(
+    `[api/generate] Geração concluída em ${Date.now() - generationStartedAt}ms: provider=${generated.provider}${generated.corrected ? " (corrigida)" : ""}.`,
+  )
 
   const theme = generated.analysis.theme || generated.content.metadata.titulo || teacherRequest.slice(0, 100)
   const title = generated.content.metadata.titulo || `${selection.planningTypeLabel} — ${theme}`

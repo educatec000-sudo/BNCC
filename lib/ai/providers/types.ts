@@ -4,6 +4,10 @@ export interface StructuredGenerationRequest<T> {
   validator: (value: unknown) => value is T
   formatName: string
   maxOutputTokens?: number
+  /** Limite de tempo da requisição ao provedor, em ms. */
+  timeoutMs?: number
+  /** Informa o modelo efetivamente usado (para logs), assim que resolvido. */
+  onModel?: (model: string) => void
 }
 
 export interface TextAIProvider {
